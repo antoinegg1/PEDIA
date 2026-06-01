@@ -1,0 +1,110 @@
+"""Evaluation prompts for judge models."""
+
+# Combined trajectory validation prompt - checks correctness, leakage, and tool mismatch in one call
+COMBINED_VALIDATION_SYSTEM_PROMPT = (
+    "You are an expert evaluator for AI agent trajectories. Your task is to validate "
+    "trajectories based on three criteria:\n\n"
+    "1. **Answer Correctness**: Does the predicted answer match the ground truth?\n"
+    "2. **Answer Leakage**: Did the model leak the final answer during reasoning phases?\n"
+    "3. **Tool Plan Consistency**: Did the model use the tools it planned to use?\n\n"
+    "The AI follows a three-phase protocol:\n"
+    "- Phase 1 (Reasoning): Generate reasoning and tool plan, NO final answer\n"
+    "- Phase 2 (Tool Call): Execute the planned tools\n"
+    "- Phase 3 (Final Answer): Generate <answer>...</answer>\n"
+)
+
+COMBINED_VALIDATION_QUERY_PROMPT = (
+    "Evaluate this trajectory:\n\n"
+    "**Question**: {question}\n"
+    "**Ground Truth Answer**: {ground_truth}\n"
+    "**Model's Predicted Answer**: {prediction}\n"
+    "**Phase 1 Reasoning (tool plans)**: {reasoning_text}\n"
+    "**Phase 2 Tools Actually Called**: {actual_tools}\n\n"
+    "Check the following:\n\n"
+    "1. **Correctness**: Does the prediction match the ground truth? "
+    "Consider synonyms, unit conversions, and semantic equivalence.\n\n"
+    "2. **Leakage**: Did the model generate <answer> tags or state a final answer "
+    "in Phase 1 reasoning? (Intermediate reasoning is OK, final conclusions are NOT)\n\n"
+    "3. **Tool Consistency**: Did the tools called in Phase 2 match what was planned "
+    "in Phase 1 reasoning? (Look for tool names like image_crop, text_ocr, map_text_ocr, "
+    "grounding_dino, etc. in the reasoning)\n\n"
+    "**Output Format** (exactly this format):\n"
+    "Correctness: 0 or 1\n"
+    "Leakage: 0 or 1\n"
+    "ToolMatch: 0 or 1\n"
+    "Reason: <brief explanation if any check failed>"
+)
+
+EVAL_SYSTEM_PROMPT = (
+    "You are an intelligent chatbot designed for evaluating the correctness of generative outputs "
+    "for question-answer pairs.\n"
+    "Your task is to compare the predicted answer with the correct answer and determine if they match meaningfully.\n"
+    "------\n"
+    "##INSTRUCTIONS:\n"
+    "- Focus on the meaningful match between the predicted answer and the correct answer, ignoring minor differences in phrasing or formatting.\n"
+    "- Consider synonyms or paraphrases as valid matches.\n"
+    "- Evaluate the correctness of the prediction compared to the answer."
+)
+
+EVAL_QUERY_PROMPT = (
+    "I will give you a question related to an image and the following text as inputs:\n\n"
+    "1. **Question Related to the Image**: {question}\n"
+    "2. **Ground Truth Answer**: {ground_truth}\n"
+    "3. **Model Predicted Answer**: {prediction}\n\n"
+    "Your task is to evaluate the model's predicted answer against the ground truth answer, "
+    "based on the context provided by the question related to the image. Consider the following criteria for evaluation:\n"
+    "- **Relevance**: Does the predicted answer directly address the question posed?\n"
+    "- **Accuracy**:\n"
+    "(1) If the ground truth answer is open-ended, consider whether the prediction reflects the information "
+    "given in the ground truth without introducing factual inaccuracies.\n"
+    "(2) If the ground truth answer is a definitive answer, strictly compare the model's prediction to the actual answer. "
+    "Pay attention to unit conversions such as length and angle, etc. As long as the results are consistent, the model's "
+    "prediction should be deemed correct.\n\n"
+
+    "The following are examples of correct and incorrect predictions:\n"
+    "- Correct: (pred=23.8 billion euros, gt=23.8 billion euros) "                                                       
+    "- Correct: (pred=60%, gt=60) "                                                             
+    "- Correct: “Don’t know” (6%)., gt=Don't Know"  
+    "**Output Format**:\n"
+    "Your response should include an integer score indicating the correctness of the prediction: 1 for correct and 0 for incorrect.\n"
+    'The format should be "Score: 0 or 1"'
+)
+
+LEAKAGE_DETECTION_SYSTEM_PROMPT = (
+    "You are an expert at detecting protocol violations in AI reasoning traces. "
+    "The AI follows a three-phase protocol:\n"
+    "- Phase 1 (Reasoning): Generate reasoning and analysis, NO final answer allowed\n"
+    "- Phase 2 (Tool Call): Generate tool calls, NO final answer allowed\n"
+    "- Phase 3 (Final Answer): Generate the final answer with <answer>...</answer> tags\n\n"
+    "Your task is to check if the model violated this protocol by generating "
+    "an answer or answer-like content in the reasoning/tool-call phases (Phase 1 & 2).\n"
+    "------\n"
+    "##INSTRUCTIONS:\n"
+    "- Check if <answer> tags appear in the reasoning phases\n"
+    "- Check if the model directly states the final answer before the designated answer phase\n"
+    "- Check if the model concludes with a definitive answer statement in reasoning\n"
+    "- Tool call results and intermediate observations are NOT leakage"
+)
+
+LEAKAGE_DETECTION_QUERY_PROMPT = (
+    "I will provide you with the model's thinking process from Phase 1 and Phase 2 "
+    "(reasoning and tool-call phases). The model should NOT have generated a final answer "
+    "in these phases.\n\n"
+    "1. **Question**: {question}\n"
+    "2. **Ground Truth Answer**: {ground_truth}\n"
+    "3. **Model's Thinking Process (Phase 1 & 2)**: {thinking_text}\n\n"
+    "Your task is to determine if the model violated the protocol by answering in "
+    "the reasoning/tool-call phases instead of waiting for the final answer phase.\n\n"
+    "Signs of protocol violation (leakage):\n"
+    "- <answer> tags appearing in the thinking process\n"
+    "- The model stating 'The answer is X' or 'Therefore, X' as a final conclusion\n"
+    "- The model providing a definitive final answer before the answer phase\n\n"
+    "Signs that are NOT leakage:\n"
+    "- Intermediate reasoning steps and calculations\n"
+    "- Tool call requests and their results\n"
+    "- Partial observations or hypotheses that are not final conclusions\n"
+    "- Phrases like 'I need to...' or 'Let me check...' followed by tool calls\n\n"
+    "**Output Format**:\n"
+    "Respond with 'Leakage: 1' if protocol violation is detected, or 'Leakage: 0' if "
+    "the model correctly followed the protocol (only reasoning and tool calls, no final answer)."
+)

@@ -1,0 +1,36 @@
+# LlamaFactory SFT environment.
+#
+#                  (provides torch 2.8.0 + CUDA 12.8 + Python 3.12 baseline)
+#
+# Install (run from this repo root):
+#   pip install -r requirements.txt
+#
+# Verified target: Python 3.12, CUDA 12.8, 8x L20X GPU node (AReaL cluster).
+#
+# Verification status: smoke test PASSED — train_v1.sh with --max_steps=1
+# trained 1 SFT step in 9.22s, loss=1.8779, all 8 GPUs loaded ~64-88 GB each
+# (DeepSpeed ZeRO-2 + Qwen3-VL-8B-Thinking).
+#
+# IMPORTANT - version drift caps inside llamafactory==0.9.4 pyproject.toml:
+#   transformers <= 4.57.1
+#   peft         <= 0.17.1
+#   deepspeed    <= 0.16.9 (via [deepspeed] extra)
+#
+# After install, re-run `train_v{2,4}.sh` to verify SFT stability.
+
+# === Torch stack (already provided by pytorch280-1210-v1.sif; pin so
+#     llamafactory cannot pull newer wheels in surprise) ===
+# For non-CU128 hosts, override with:
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0
+
+# === Logging backend ===
+# Required by `report_to: tensorboard` in the SFT YAMLs - not pulled by
+# llamafactory itself.
+tensorboard==2.16.2
+
+# === Main framework (pulls transformers, peft, accelerate, datasets,
+#     deepspeed, nltk, jieba, rouge-chinese, ... ) ===
+llamafactory[metrics,deepspeed]==0.9.4

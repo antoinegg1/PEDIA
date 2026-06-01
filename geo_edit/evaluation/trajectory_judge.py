@@ -1,0 +1,424 @@
+"""Trajectory filtering judge using OpenAI-compatible API.
+
+This module provides AI-powered filtering for trajectory data:
+1. Wrong answer filtering - verify final answer correctness
+2. Answer leakage detection - detect <answer> tags in thinking/tool-call phases
+
+The leakage detection follows the three-phase protocol:
+- Phase 1 (Reasoning): NO <answer> allowed
+- Phase 2 (Tool Call): NO <answer> allowed
+- Phase 3 (Final Answer): <answer> is expected here
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+from openai import OpenAI
+
+from geo_edit.prompts import (
+    COMBINED_VALIDATION_QUERY_PROMPT,
+    COMBINED_VALIDATION_SYSTEM_PROMPT,
+    EVAL_QUERY_PROMPT,
+    EVAL_SYSTEM_PROMPT,
+    LEAKAGE_DETECTION_QUERY_PROMPT,
+    LEAKAGE_DETECTION_SYSTEM_PROMPT,
+)
+from geo_edit.tool_definitions.router import TOOL_CATEGORIES
+from geo_edit.utils.text_utils import (
+    extract_response_text,
+    parse_leakage_score,
+    parse_score,
+)
+
+# Pattern to detect <answer> tags (case insensitive)
+ANSWER_TAG_PATTERN = re.compile(r"<answer>", re.IGNORECASE)
+
+# Known tool names - derived from the single source of truth in router.py
+KNOWN_TOOL_NAMES = sorted(
+    {name for names in TOOL_CATEGORIES.values() for name in names}
+)
+
+# Build regex pattern for tool name extraction (case insensitive)
+TOOL_NAME_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(name) for name in KNOWN_TOOL_NAMES) + r")\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class TrajectoryFilterConfig:
+    """Configuration for trajectory filtering."""
+
+    model: str = "gpt-5-mini-2025-08-07"
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    filter_wrong_answers: bool = True
+    filter_answer_leakage: bool = True
+    filter_tool_mismatch: bool = (
+        False  # Filter if Phase 1 plan doesn't match Phase 2 tool calls
+    )
+    leakage_check_mode: str = "quick"  # "quick" (regex only) or "full" (AI-based)
+    max_workers: int = 16
+
+
+@dataclass
+class FilterStats:
+    """Statistics for trajectory filtering."""
+
+    total: int = 0
+    passed: int = 0
+    filtered_wrong_answer: int = 0
+    filtered_leakage: int = 0
+    filtered_tool_mismatch: int = 0
+    failed: int = 0
+    api_errors: int = 0
+
+    def summary(self) -> str:
+        """Generate a summary string of the filtering statistics."""
+        lines = [
+            "=== Filtering Statistics ===",
+            f"Total subfolders: {self.total}",
+            f"Passed: {self.passed}",
+            f"Filtered (wrong answer): {self.filtered_wrong_answer}",
+            f"Filtered (answer leakage): {self.filtered_leakage}",
+            f"Filtered (tool mismatch): {self.filtered_tool_mismatch}",
+            f"Failed to process: {self.failed}",
+            f"API errors: {self.api_errors}",
+        ]
+        return "\n".join(lines)
+
+
+class TrajectoryJudge:
+    """Judge for trajectory filtering using OpenAI-compatible API."""
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "gpt-5-mini-2025-08-07",
+        api_base: Optional[str] = None,
+    ):
+        """Initialize the trajectory judge.
+
+        Args:
+            api_key: OpenAI API key. Falls back to OPENAI_API_KEY env var.
+            model: Model name to use for evaluation.
+            api_base: Optional custom API base URL.
+        """
+        client_kwargs = {"api_key": api_key or os.environ.get("OPENAI_API_KEY")}
+        if api_base is not None:
+            client_kwargs["base_url"] = api_base
+        self.client = OpenAI(**client_kwargs)
+        self.model = model
+        self.api_mode = self._resolve_api_mode(api_base)
+
+    @staticmethod
+    def _resolve_api_mode(api_base: Optional[str]) -> str:
+        """Determine API mode based on base URL."""
+        if api_base and "matrixllm.alipay.com" in api_base.lower():
+            return "chat"
+        return "responses"
+
+    def _call_api(self, system_prompt: str, user_prompt: str) -> str:
+        """Call the API and return the response text.
+
+        Args:
+            system_prompt: System message content.
+            user_prompt: User message content.
+
+        Returns:
+            Response text from the API.
+        """
+        if self.api_mode == "chat":
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            return extract_response_text(resp, "chat_completions")
+        else:
+            resp = self.client.responses.create(
+                model=self.model,
+                instructions=system_prompt,
+                input=[
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": user_prompt}],
+                    }
+                ],
+            )
+            return resp.output_text or ""
+
+    def judge_correctness(
+        self,
+        question: str,
+        ground_truth: str,
+        prediction: str,
+        additional_prompt: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Judge if the prediction is correct.
+
+        Args:
+            question: The question being answered.
+            ground_truth: The ground truth answer.
+            prediction: The model's predicted answer.
+            additional_prompt: Optional task-specific evaluation hints appended
+                to the query prompt (e.g. equivalence rules for SRN).
+
+        Returns:
+            Tuple of (is_correct, raw_response).
+            is_correct is True if the prediction matches ground truth.
+        """
+        prompt = EVAL_QUERY_PROMPT.format(
+            question=question,
+            ground_truth=ground_truth,
+            prediction=prediction,
+        )
+        if additional_prompt:
+            prompt += "\n\n" + additional_prompt
+        response = self._call_api(EVAL_SYSTEM_PROMPT, prompt)
+        score = parse_score(response)
+        is_correct = score == "1"
+        return is_correct, response
+
+    def detect_leakage(
+        self,
+        question: str,
+        ground_truth: str,
+        thinking_text: str,
+        use_ai: bool = True,
+    ) -> Tuple[bool, str]:
+        """Detect if the thinking process contains answer leakage.
+
+        Leakage means the model generated <answer> tags or final answers
+        in the reasoning/tool-call phases (Phase 1 & 2) when it should
+        only do so in Phase 3.
+
+        Args:
+            question: The question being answered.
+            ground_truth: The ground truth answer.
+            thinking_text: The model's thinking/reasoning text (Phase 1 & 2 only).
+            use_ai: If True, use AI judge for subtle cases. If False, only use regex.
+
+        Returns:
+            Tuple of (has_leakage, reason).
+            has_leakage is True if leakage is detected.
+        """
+        # Quick check: look for <answer> tags in thinking text
+        if ANSWER_TAG_PATTERN.search(thinking_text):
+            return True, "Found <answer> tag in thinking/tool-call phase"
+
+        # If AI check is disabled, return no leakage
+        if not use_ai:
+            return False, "No <answer> tag found (regex only)"
+
+        # Use AI for more subtle protocol violations
+        prompt = LEAKAGE_DETECTION_QUERY_PROMPT.format(
+            question=question,
+            ground_truth=ground_truth,
+            thinking_text=thinking_text,
+        )
+        response = self._call_api(LEAKAGE_DETECTION_SYSTEM_PROMPT, prompt)
+        score = parse_leakage_score(response)
+        has_leakage = score == "1"
+        return has_leakage, response
+
+    def validate_trajectory(
+        self,
+        question: str,
+        ground_truth: str,
+        prediction: str,
+        reasoning_text: str,
+        actual_tools: set,
+    ) -> Tuple[bool, str]:
+        """Combined validation: correctness, leakage, and tool match in one API call.
+
+        Args:
+            question: The question being answered.
+            ground_truth: The ground truth answer.
+            prediction: The model's predicted answer.
+            reasoning_text: The model's Phase 1 reasoning text.
+            actual_tools: Set of tool names actually called in Phase 2.
+
+        Returns:
+            Tuple of (is_valid, reason).
+            is_valid is True if all checks pass.
+        """
+        prompt = COMBINED_VALIDATION_QUERY_PROMPT.format(
+            question=question,
+            ground_truth=ground_truth,
+            prediction=prediction,
+            reasoning_text=reasoning_text,
+            actual_tools=", ".join(actual_tools) if actual_tools else "none",
+        )
+        response = self._call_api(COMBINED_VALIDATION_SYSTEM_PROMPT, prompt)
+
+        # Parse response - extract value immediately after colon
+        correctness = "0"
+        leakage = "0"
+        tool_match = "0"
+        reason = ""
+
+        def extract_score(line: str) -> str:
+            """Extract 0 or 1 from 'Key: 0' or 'Key: 1' format."""
+            if ":" not in line:
+                return "0"
+            value_part = line.split(":", 1)[1].strip()
+            # Get first character/word which should be 0 or 1
+            first_token = value_part.split()[0] if value_part.split() else "0"
+            return "1" if first_token.startswith("1") else "0"
+
+        for line in response.split("\n"):
+            line = line.strip()
+            if line.lower().startswith("correctness:"):
+                correctness = extract_score(line)
+            elif line.lower().startswith("leakage:"):
+                leakage = extract_score(line)
+            elif line.lower().startswith("toolmatch:"):
+                tool_match = extract_score(line)
+            elif line.lower().startswith("reason:"):
+                reason = line.split(":", 1)[1].strip() if ":" in line else ""
+
+        # Check all conditions
+        if correctness != "1":
+            return (
+                False,
+                f"wrong_answer (gt={ground_truth}, pred={prediction}) reason={reason}",
+            )
+        if leakage == "1":
+            return False, f"answer_leakage (reason={reason})"
+        if tool_match != "1":
+            return False, f"tool_mismatch (reason={reason})"
+
+        return True, "valid"
+
+
+def quick_leakage_check(thinking_text: str) -> Tuple[bool, str]:
+    """Quick leakage check using regex only (no API call).
+
+    This is a fast check that detects obvious <answer> tags in the
+    thinking/tool-call phases without needing to call an external API.
+
+    Args:
+        thinking_text: The model's thinking/reasoning text (Phase 1 & 2 only).
+
+    Returns:
+        Tuple of (has_leakage, reason).
+    """
+    if ANSWER_TAG_PATTERN.search(thinking_text):
+        return True, "Found <answer> tag in thinking/tool-call phase"
+    return False, "No <answer> tag found"
+
+
+def extract_planned_tools(reasoning_text: str) -> set:
+    """Extract tool names mentioned in Phase 1 reasoning text.
+
+    Args:
+        reasoning_text: The model's reasoning text from Phase 1.
+
+    Returns:
+        Set of tool names mentioned in the text.
+    """
+    matches = TOOL_NAME_PATTERN.findall(reasoning_text)
+    # Normalize to lowercase for comparison
+    return {name.lower() for name in matches}
+
+
+def extract_actual_tools_from_trajectory(trajectory: list) -> list:
+    """Extract the sequence of tool calls from trajectory.
+
+    For each step, returns the set of tools called in Phase 2.
+
+    Args:
+        trajectory: List of message dicts from trajectory.json.
+
+    Returns:
+        List of (reasoning_text, tool_set) tuples for each step.
+        reasoning_text is the Phase 1 content, tool_set is the Phase 2 tools.
+    """
+    steps = []
+    i = 0
+    while i < len(trajectory):
+        msg = trajectory[i]
+        # Look for assistant message without tool_calls (Phase 1 reasoning)
+        if msg.get("role") == "assistant" and not msg.get("tool_calls"):
+            reasoning_content = msg.get("content", "")
+            if isinstance(reasoning_content, list):
+                # Extract text from content parts
+                reasoning_text = ""
+                for part in reasoning_content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        reasoning_text += part.get("text", "") + "\n"
+                    elif isinstance(part, str):
+                        reasoning_text += part + "\n"
+            else:
+                reasoning_text = str(reasoning_content) if reasoning_content else ""
+
+            # Look for the next assistant message with tool_calls (Phase 2)
+            tool_set = set()
+            j = i + 1
+            while j < len(trajectory):
+                next_msg = trajectory[j]
+                if next_msg.get("role") == "assistant" and next_msg.get("tool_calls"):
+                    # Found Phase 2 tool calls
+                    for tc in next_msg.get("tool_calls", []):
+                        func = tc.get("function", {})
+                        name = func.get("name", "")
+                        if name:
+                            tool_set.add(name.lower())
+                    break
+                elif next_msg.get("role") == "assistant":
+                    # Another assistant message without tool_calls - might be final answer
+                    break
+                j += 1
+
+            if reasoning_text.strip() and tool_set:
+                steps.append((reasoning_text, tool_set))
+            i = j + 1 if j < len(trajectory) else i + 1
+        else:
+            i += 1
+
+    return steps
+
+
+def check_tool_plan_mismatch(trajectory: list) -> Tuple[bool, str]:
+    """Check if Phase 1 tool plans match Phase 2 actual tool calls.
+
+    Args:
+        trajectory: List of message dicts from trajectory.json.
+
+    Returns:
+        Tuple of (has_mismatch, reason).
+        has_mismatch is True if there's a mismatch or no plan declared.
+    """
+    steps = extract_actual_tools_from_trajectory(trajectory)
+
+    if not steps:
+        # No reasoning + tool call pairs found
+        return False, "No Phase 1/Phase 2 pairs found"
+
+    for i, (reasoning_text, actual_tools) in enumerate(steps):
+        planned_tools = extract_planned_tools(reasoning_text)
+
+        if not planned_tools:
+            # Phase 1 didn't declare any tools but Phase 2 called tools
+            return (
+                True,
+                f"Step {i + 1}: No tools declared in Phase 1, but called: {actual_tools}",
+            )
+
+        # Check if actual tools are subset of planned tools
+        # (model might plan multiple tools but only call some)
+        if not actual_tools.issubset(planned_tools):
+            unexpected = actual_tools - planned_tools
+            return (
+                True,
+                f"Step {i + 1}: Unexpected tools {unexpected}, planned: {planned_tools}",
+            )
+
+    return False, "Tool plans match"

@@ -1,0 +1,31 @@
+# Tool Enable Configuration
+# Only tools listed here are recognized; runtime `enable_tools` parameter
+# can further restrict which ones load.
+
+# === GENERAL TOOLS - Image editing + general-purpose ===
+image_crop: false
+image_label: false
+draw_line: false
+draw_path: false
+bounding_box: false
+image_highlight: false
+text_ocr: false
+auto_segment: false
+bbox_segment: false
+text_segment: false
+exemplar_segment: false
+concept_count: false
+presence_check: false
+grounding_dino: false
+
+# === MATH TOOLS ===
+formula_ocr: false
+chart_text_ocr: false
+
+# === TABLE TOOLS ===
+table_ocr: false
+
+# === MAP TOOLS ===
+text_spotting: false
+seal_ocr: false
+map_text_ocr: false
