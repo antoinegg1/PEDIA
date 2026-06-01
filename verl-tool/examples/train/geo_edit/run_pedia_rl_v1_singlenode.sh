@@ -8,7 +8,8 @@ set -x
 # Environment variables (optional):
 #   WORKSPACE        – default ./outputs/mixed_rl
 #   MODEL_PATH       – SFT checkpoint (default pedia_8b_SFT_v1)
-#   TOOL_SERVER_URL  – default http://127.0.0.1:30888/get_observation
+#   TOOL_SERVER_IP   – tool server IP (port defaults to 30888)
+#   TOOL_SERVER_URL  – full URL, or host/IP with port 30888 and /get_observation auto-added
 #   JUDGE_API_KEY / JUDGE_API_BASE / JUDGE_MODEL
 # ============================================================
 
@@ -99,7 +100,17 @@ ray start --head --port=6379 --num-gpus=$n_gpus_per_node --resources='{"tool_age
 sleep 4
 
 # ---- Tool server URL (default localhost) ----
-tool_server_url=${TOOL_SERVER_URL:-http://127.0.0.1:30888/get_observation}
+if [ -n "${TOOL_SERVER_URL:-}" ]; then
+    if [[ "$TOOL_SERVER_URL" == http://* || "$TOOL_SERVER_URL" == https://* ]]; then
+        tool_server_url=$TOOL_SERVER_URL
+    else
+        tool_server_url=http://$TOOL_SERVER_URL:30888/get_observation
+    fi
+elif [ -n "${TOOL_SERVER_IP:-}" ]; then
+    tool_server_url=http://$TOOL_SERVER_IP:30888/get_observation
+else
+    tool_server_url=http://127.0.0.1:30888/get_observation
+fi
 echo "Using tool server at $tool_server_url"
 
 # ---- Verify Ray ----

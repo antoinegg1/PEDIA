@@ -8,8 +8,8 @@ set -x
 # Environment variables:
 #   WORKSPACE        – default: ./outputs/mixed_rl
 #   MODEL_PATH       – path to SFT checkpoint
-#   TOOL_SERVER_URL  – tool server URL (must be reachable from all nodes)
 #   TOOL_SERVER_IP   – tool server IP (port defaults to 30888)
+#   TOOL_SERVER_URL  – full URL, or host/IP with port 30888 and /get_observation auto-added
 #   JUDGE_API_KEY / JUDGE_API_BASE / JUDGE_MODEL – LLM judge config
 # ============================================================
 
@@ -96,7 +96,11 @@ echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
 # ---- Resolve tool server URL ----
 if [ -n "${TOOL_SERVER_URL:-}" ]; then
-    tool_server_url=$TOOL_SERVER_URL
+    if [[ "$TOOL_SERVER_URL" == http://* || "$TOOL_SERVER_URL" == https://* ]]; then
+        tool_server_url=$TOOL_SERVER_URL
+    else
+        tool_server_url=http://$TOOL_SERVER_URL:30888/get_observation
+    fi
 elif [ -n "${TOOL_SERVER_IP:-}" ]; then
     tool_server_url=http://$TOOL_SERVER_IP:30888/get_observation
 else

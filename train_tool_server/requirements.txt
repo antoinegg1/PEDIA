@@ -1,0 +1,48 @@
+# train_tool_server runtime environment.
+#
+# One-step install:
+#   cd train_tool_server && pip install -r requirements.txt
+#
+# Notes:
+# - vllm 0.17.0 requires torch >= 2.10, so this environment is intentionally
+#   separate from the peria-rl environment, which stays on torch 2.8.
+# - geo_edit is installed editable so Ray actors can import its modules.
+
+# === Torch / CUDA runtime ===
+torch>=2.10
+torchvision
+torchaudio
+
+# === Inference / model loaders ===
+vllm==0.17.0
+transformers==4.57.1
+accelerate==1.11.0
+
+# === HTTP server (router + per-agent backends) ===
+fastapi
+uvicorn
+pydantic
+httpx
+httptools
+fire
+colorlog
+
+# === Distributed orchestration ===
+ray[default]
+
+# === Vision / preprocessing ===
+pillow
+numpy
+timm
+iopath
+ftfy
+open_clip_torch
+
+# === Misc helpers used inside tools ===
+regex
+tqdm
+pyyaml
+
+# === Editable installs (this repo + sibling geo_edit) ===
+-e .
+-e ../geo_edit/

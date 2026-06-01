@@ -104,7 +104,7 @@ OOD : visworld_{cube,mmsi,ballgame,paperfolding}  mapeval_visual  babyvision  vs
 
 | Script | Role |
 |---|---|
-| `geo_edit/scripts/run_inference.sh`               | Auto-launches vLLM (`DP=8`) in background, waits for `/v1/models`, runs inference for `$DATASET`, `trap`-kills vLLM on exit. |
+| `geo_edit/scripts/run_inference.sh`               | Single-node eval launcher: starts local Ray on GPUs 0-3 for ToolRouter-created tool actors, launches vLLM (`DP=4`) on GPUs 4-7, waits for `/v1/models`, runs inference for `$DATASET`, and cleans up. |
 | `geo_edit/scripts/run_eval.sh`                    | Scores inference outputs. **Defaults to rule-based only** (fast sanity check). Export `JUDGE_API_KEY` to enable LLM-judge fallback (needed to reproduce paper numbers); `JUDGE_API_BASE` defaults to `https://api.openai.com/v1`. |
 | `geo_edit/scripts/iterative_sampling_generate.py` | SFT trajectory sampling against a **raw** third-party dataset (uses `--dataset_path` + `--dataset_name`, NOT the registry). |
 | `geo_edit/scripts/async_generate_with_tool_call_api.py` | Inner inference runner (called by `run_inference.sh`). |
@@ -117,30 +117,23 @@ OOD : visworld_{cube,mmsi,ballgame,paperfolding}  mapeval_visual  babyvision  vs
 
 ## Workflows
 
-### Eval (2-node minimum: tool node + inference node)
+### Eval (single-node default: Ray tool actors + vLLM)
 
 ```bash
-# ─── Node A: tool server (all 8 GPUs) ───
+# run_inference starts Ray on GPUs 0-3, then vLLM on GPUs 4-7.
+# async_generate_with_tool_call_api.py creates PaddleOCR-VL, SAM3, and
+# Grounding-DINO Ray actors via ToolRouter. Do not launch the HTTP tool server
+# for evaluation.
 conda activate peria-tools
 unset ROCR_VISIBLE_DEVICES
-ray start --head --port=6379 --num-gpus=8 --resources='{"tool_agent": 8}'
-bash train_tool_server/scripts/launch_tool_server.sh        # router on :30888
-
-# ─── Node B: run_inference auto-launches vLLM DP=8 → runs inference ───
-conda activate peria-tools
-unset ROCR_VISIBLE_DEVICES
-ray start --address=<node-a-ip>:6379
 bash geo_edit/scripts/run_inference.sh                       # DATASET=visual_probe_easy
 # DATASET=reason_map bash geo_edit/scripts/run_inference.sh  # other registered id
 
-# ─── Node B (or anywhere CPU): score outputs ───
+# Score outputs on the same node or any CPU node.
 # Rule-based by default. To reproduce paper numbers, export JUDGE_API_KEY
 # (JUDGE_API_BASE defaults to OpenAI's official endpoint).
 bash geo_edit/scripts/run_eval.sh
 ```
-
-Single-node fallback: `DP_SIZE=4 CUDA_VISIBLE_DEVICES=4,5,6,7 bash run_inference.sh`
-+ `CUDA_VISIBLE_DEVICES=0,1,2,3 bash launch_tool_server.sh` on the same machine.
 
 ### SFT (1 × 8 GPU)
 
@@ -152,7 +145,10 @@ cd llamafactory && bash train_v1.sh           # → ./pedia_model/pedia_8b_SFT_v
 ### RL (2-node minimum: tool node + training node)
 
 ```bash
-# ─── Node A: tool server (same as Eval Node A) ───
+# ─── Node A: HTTP tool server for RL rollouts ───
+conda activate peria-tools
+unset ROCR_VISIBLE_DEVICES
+bash train_tool_server/scripts/launch_tool_server.sh        # router on :30888
 
 # ─── Node B: RL training ───
 conda activate peria-rl
@@ -165,8 +161,9 @@ TOOL_SERVER_URL=http://<node-a-ip>:30888/get_observation \
 ```
 
 > RL training uses **HTTP** (`TOOL_SERVER_URL`) to reach the tool server.
-> Eval inference uses **Ray actors** (both nodes must be in the same Ray
-> cluster, `tool_agent` resource). Different code paths — don't conflate.
+> Eval inference uses local **Ray actors** created by `ToolRouter` inside
+> `async_generate_with_tool_call_api.py`; it does not use the HTTP router.
+> Different code paths — don't conflate.
 
 ### SFT data synthesis (3-stage pipeline)
 
@@ -175,7 +172,7 @@ conda activate peria-tools
 export JUDGE_API_KEY=<your-openai-key>      # REQUIRED — trajectory filter calls the judge
 # JUDGE_API_BASE defaults to https://api.openai.com/v1
 
-# 1. Tool server (Node A) + Qwen3-VL-8B-Thinking served via run_inference-style vLLM.
+# 1. Local Ray tool actors + Qwen3-VL-8B-Thinking served via run_inference-style vLLM.
 
 # 2. Iterative sampling — uses RAW source data (not registry).
 python -m geo_edit.scripts.iterative_sampling_generate \
@@ -212,9 +209,10 @@ python -m geo_edit.data_preprocess.convert_trajectory_to_sft \
    ABI; crashes the torch 2.8 baseline at import time. Sanity check after
    any `peria-rl` reinstall: `pip uninstall -y deep_ep deep_gemm`.
 
-4. **Tool server uses two transports in different code paths**:
+4. **Tool calls use two different code paths**:
    - Eval inference (`async_generate_with_tool_call_api.py`) → **Ray actors**
-     (both nodes must be in the same Ray cluster).
+     created locally by `ToolRouter`; `run_inference.sh` starts the local Ray
+     head on GPUs 0-3.
    - RL rollouts (verl-tool) → **HTTP** via `TOOL_SERVER_URL` env var.
    Don't mix them up.
 
@@ -229,7 +227,7 @@ python -m geo_edit.data_preprocess.convert_trajectory_to_sft \
 6. **PaddleOCR-VL `num_replicas: 2`** in
    `geo_edit/tool_definitions/agents/paddleocr_tool.py`. Earlier was 6.
    Bumping back will OOM — 2 PaddleOCR replicas + SAM3 + Grounding-DINO +
-   vLLM `DP=8` already don't co-locate on one 8-GPU node.
+   eval vLLM `DP=4` already use all 8 GPUs in the single-node evaluation split.
 
 7. **No wandb**: every training script uses `trainer.logger=['console']`.
    Don't add wandb back.
