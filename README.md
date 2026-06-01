@@ -38,13 +38,13 @@ PERIA uses two lightweight tool families: **vision perception tools** expose tex
 
 ### Motivation of the PERIA method
 
-![alt text](figure1.png)
+![PERIA motivation](assets/figure1.png)
 
 Spatial reasoning often requires details that are easy to miss in a single forward pass: small text, map symbols, relative positions, object boundaries, and multi-step path constraints. PERIA treats these details as evidence to be acquired. Instead of relying only on the VLM's latent image representation, it lets the model call tools, observe their outputs, and refine its reasoning.
 
 ### Tool-augmented reasoning
 
-![alt text](figure2.png)
+![PERIA tool-augmented reasoning](assets/figure2.png)
 
 PERIA organizes tools into two families:
 
@@ -54,7 +54,7 @@ PERIA organizes tools into two families:
 
 ### Results summary
 
-![alt text](image.png)
+![PERIA results summary](assets/image.png)
 
 PERIA-8B targets spatial reasoning workloads including visual probing, map reasoning, path tracing, and out-of-distribution visual reasoning. In our experiments, it improves the Qwen3-VL-8B backbone and remains competitive with much larger models such as Qwen3-VL-235B-A22B-Thinking and GPT-5 on spatial reasoning benchmarks.
 
