@@ -30,7 +30,7 @@ PERIA uses two lightweight tool families: **vision perception tools** expose tex
 - [RL Training](#rl-training)
   - [Node A: tool server](#node-a-tool-server)
   - [Node B: RL training](#node-b-rl-training)
-- [SFT Data Synthesis](#sft-data-synthesis)
+<!-- - [SFT Data Synthesis](#sft-data-synthesis) -->
 - [Citation](#citation)
 - [Acknowledgment](#acknowledgment)
 
@@ -217,6 +217,7 @@ export JUDGE_MODEL=gpt-5-mini-2025-08-07
 
 For multi-node RL, export the same `JUDGE_API_KEY` / `JUDGE_API_BASE` / `JUDGE_MODEL` variables before starting the Ray head, workers, and training launcher.
 
+<!--
 ## Data Synthesis
 
 SFT data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation). The example below synthesizes trajectories from [FSCCS/ReasonMap-Plus](https://huggingface.co/datasets/FSCCS/ReasonMap-Plus) and converts them to LLaMA-Factory SFT format.
@@ -248,7 +249,8 @@ export JUDGE_API_KEY=<your-openai-key>
 bash geo_edit/scripts/run_sft_data_synthesis.sh
 ```
 
-The generated SFT data is written to `./pedia_data/pedia_sft_v1/`. 
+The generated SFT data is written to `./pedia_data/pedia_sft_v1/`.
+-->
 
 ## Dataset and Models
 
