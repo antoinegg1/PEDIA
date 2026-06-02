@@ -117,34 +117,6 @@ Raw inference outputs are saved under `./outputs/eval_results/visual_probe_easy/
 
 By default, `run_eval.sh` uses rule-based scoring only. To reproduce paper numbers, enable the LLM-judge fallback with `export JUDGE_API_KEY=<your-openai-key>`.
 
-## Dataset and Models
-
-All released checkpoints live in [Antoinegg1/pedia_model](https://huggingface.co/Antoinegg1/pedia_model):
-
-| Path | Purpose |
-|---|---|
-| `PEDIA_8B_v1/` | Default 8B RL checkpoint  |
-| `pedia_8b_SFT_v1/` | 8B SFT checkpoint used as the RL starting point |
-| `pedia_4b_v1/` | Optional 4B RL checkpoint |
-| `pedia_2b_v1/` | Optional 2B RL checkpoint |
-| `PaddleOCR-VL-1.5/` | OCR and document perception tool backend |
-| `sam3.1/` | Segmentation tool backend |
-| `grounding-dino-base/` | Grounding tool backend |
-
-All released data lives in [Antoinegg1/pedia_data](https://huggingface.co/datasets/Antoinegg1/pedia_data):
-
-| Path | Purpose |
-|---|---|
-| `pedia_sft_v1.tar` | SFT data archive: `train.json` and images |
-| `pedia_rl_v1.tar` | RL train and validation parquet files plus images |
-| `eval/id/*.parquet` | In-distribution evaluation benchmarks |
-| `eval/ood/*.parquet` | Out-of-distribution evaluation benchmarks |
-
-Registered evaluation dataset ids:
-
-- ID: `visual_probe_easy`, `visual_probe_medium`, `visual_probe_hard`, `reason_map`, `reason_map_plus`, `map_trace`
-- OOD: `visworld_cube`, `visworld_mmsi`, `visworld_ballgame`, `visworld_paperfolding`, `mapeval_visual`, `babyvision`, `vstar_bench`
-
 ## SFT Training
 
 SFT trains from the public Qwen3-VL-8B-Thinking base model on `pedia_sft_v1`.
@@ -176,7 +148,7 @@ Run SFT on one 8-GPU node:
 bash llamafactory/train_v1.sh
 ```
 
-The checkpoint is written to `./pedia_model/pedia_8b_SFT_v1/`. SFT configuration lives in [`llamafactory/configs/pedia_sft_v1.yaml`](llamafactory/configs/pedia_sft_v1.yaml), and the launcher is [`llamafactory/train_v1.sh`](llamafactory/train_v1.sh).
+The checkpoint is written to `./pedia_model/pedia_8b_SFT_v1/` and SFT configuration lives in [`llamafactory/configs/pedia_sft_v1.yaml`](llamafactory/configs/pedia_sft_v1.yaml).
 
 ## RL Training
 
@@ -235,7 +207,7 @@ TOOL_SERVER_IP=<node-a-ip> \
 
 RL outputs are saved under `./outputs/mixed_rl/`. For 4-node training, use [`verl-tool/examples/train/geo_edit/run_pedia_rl_v1_multinode.sh`](verl-tool/examples/train/geo_edit/run_pedia_rl_v1_multinode.sh) with the Ray startup scripts in the same directory.
 
-## SFT Data Synthesis
+## Data Synthesis
 
 SFT data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation). The example below synthesizes trajectories from [FSCCS/ReasonMap-Plus](https://huggingface.co/datasets/FSCCS/ReasonMap-Plus) and converts them to LLaMA-Factory SFT format.
 
@@ -267,6 +239,34 @@ bash geo_edit/scripts/run_sft_data_synthesis.sh
 ```
 
 The generated SFT data is written to `./pedia_data/pedia_sft_v1/`. Override `SAMPLE_RATE`, `DATASET_SPLIT`, `TRAJ_DIR`, or `SFT_OUT_DIR` if you want a smaller run or a different output location.
+
+## Dataset and Models
+
+All released checkpoints live in [Antoinegg1/pedia_model](https://huggingface.co/Antoinegg1/pedia_model):
+
+| Path | Purpose |
+|---|---|
+| `PEDIA_8B_v1/` | Default 8B RL checkpoint  |
+| `pedia_8b_SFT_v1/` | 8B SFT checkpoint used as the RL starting point |
+| `pedia_4b_v1/` | Optional 4B RL checkpoint |
+| `pedia_2b_v1/` | Optional 2B RL checkpoint |
+| `PaddleOCR-VL-1.5/` | OCR and document perception tool backend |
+| `sam3.1/` | Segmentation tool backend |
+| `grounding-dino-base/` | Grounding tool backend |
+
+All released data lives in [Antoinegg1/pedia_data](https://huggingface.co/datasets/Antoinegg1/pedia_data):
+
+| Path | Purpose |
+|---|---|
+| `pedia_sft_v1.tar` | SFT data archive: `train.json` and images |
+| `pedia_rl_v1.tar` | RL train and validation parquet files plus images |
+| `eval/id/*.parquet` | In-distribution evaluation benchmarks |
+| `eval/ood/*.parquet` | Out-of-distribution evaluation benchmarks |
+
+Registered evaluation dataset ids:
+
+- ID: `visual_probe_easy`, `visual_probe_medium`, `visual_probe_hard`, `reason_map`, `reason_map_plus`, `map_trace`
+- OOD: `visworld_cube`, `visworld_mmsi`, `visworld_ballgame`, `visworld_paperfolding`, `mapeval_visual`, `babyvision`, `vstar_bench`
 
 ## Citation
 
