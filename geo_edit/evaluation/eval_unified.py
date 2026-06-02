@@ -20,16 +20,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from tqdm import tqdm
+
 from geo_edit.utils.io_utils import iter_meta_info_files, load_records
 from geo_edit.utils.stats import get_output_tokens_total, get_input_tokens_total
-from geo_edit.utils.logger import setup_logger
 
-logger = setup_logger(__name__)
+logging.disable(logging.CRITICAL)
 
 _ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL | re.IGNORECASE)
 _THINK_RE = re.compile(r"</think>\s*(.*)", re.DOTALL | re.IGNORECASE)
@@ -249,12 +251,14 @@ def evaluate_record(record: dict, record_id: str, dataset_name: str) -> dict:
     return result
 
 
-def run_llm_judge(judge, results: list[dict], records_map: dict) -> list[dict]:
+def run_llm_judge(judge, results: list[dict], records_map: dict, pbar: tqdm | None = None) -> list[dict]:
     failed = [(i, r) for i, r in enumerate(results) if r["score"] == 0.0 and r["prediction"]]
     if not failed:
         return results
 
-    logger.info(f"Running LLM judge on {len(failed)} failed records...")
+    if pbar is not None:
+        pbar.total = (pbar.total or 0) + len(failed)
+        pbar.refresh()
 
     def _judge_one(idx, result):
         rec = records_map.get(result["id"], {})
@@ -266,8 +270,7 @@ def run_llm_judge(judge, results: list[dict], records_map: dict) -> list[dict]:
                 prediction=result["prediction"],
             )
             is_correct = score == 1.0 if isinstance(score, (int, float)) else str(score).strip() == "1"
-        except Exception as e:
-            logger.warning(f"Judge failed for {result['id']}: {e}")
+        except Exception:
             is_correct = False
         return idx, is_correct
 
@@ -279,9 +282,9 @@ def run_llm_judge(judge, results: list[dict], records_map: dict) -> list[dict]:
             if is_correct:
                 results[idx]["score"] = 1.0
                 results[idx]["judge_overturned"] = True
+            if pbar is not None:
+                pbar.update(1)
 
-    overturned = sum(1 for r in results if r.get("judge_overturned"))
-    logger.info(f"LLM judge overturned {overturned}/{len(failed)} to correct")
     return results
 
 
@@ -312,23 +315,26 @@ def main():
 
     all_results = []
     records_map = {}
-
+    record_items = []
     for meta_path in iter_meta_info_files(args.result_path):
         record_id = os.path.basename(os.path.dirname(meta_path))
         for record in load_records(meta_path):
+            record_items.append((record_id, record))
+
+    with tqdm(total=len(record_items), desc="evaluating") as pbar:
+        for record_id, record in record_items:
             records_map[record_id] = record
             result = evaluate_record(record, record_id, args.dataset_name)
             all_results.append(result)
+            pbar.update(1)
 
-    if args.use_judge and args.dataset_name != "map_trace":
-        api_key = args.judge_api_key or os.environ.get("JUDGE_API_KEY")
-        api_base = args.judge_api_base or os.environ.get("JUDGE_API_BASE")
-        if api_key:
-            from geo_edit.evaluation.openai_as_judge import OpenAIJudge
-            judge = OpenAIJudge(api_key=api_key, model=args.judge_model, api_base=api_base)
-            all_results = run_llm_judge(judge, all_results, records_map)
-        else:
-            logger.warning("--use_judge set but no JUDGE_API_KEY found, skipping LLM judge")
+        if args.use_judge and args.dataset_name != "map_trace":
+            api_key = args.judge_api_key or os.environ.get("JUDGE_API_KEY")
+            api_base = args.judge_api_base or os.environ.get("JUDGE_API_BASE")
+            if api_key:
+                from geo_edit.evaluation.openai_as_judge import OpenAIJudge
+                judge = OpenAIJudge(api_key=api_key, model=args.judge_model, api_base=api_base)
+                all_results = run_llm_judge(judge, all_results, records_map, pbar)
 
     total = len(all_results)
     correct = sum(1 for r in all_results if r["score"] > 0)
@@ -387,7 +393,6 @@ def main():
     summary = "\n".join(lines)
     with open(os.path.join(args.output_path, "summary.txt"), "w") as f:
         f.write(summary + "\n")
-    print(summary)
 
 
 if __name__ == "__main__":

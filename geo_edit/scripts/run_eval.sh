@@ -36,9 +36,6 @@ if [ -n "${JUDGE_API_KEY:-}" ]; then
           --judge_model "$JUDGE_MODEL"
           --judge_api_key "$JUDGE_API_KEY"
           --judge_api_base "$JUDGE_API_BASE")
-    echo "[run_eval] mode: rule-based + LLM judge (model=$JUDGE_MODEL base=$JUDGE_API_BASE)"
-else
-    echo "[run_eval] mode: rule-based only — export JUDGE_API_KEY to enable LLM-judge fallback"
 fi
 
 "${CMD[@]}"
