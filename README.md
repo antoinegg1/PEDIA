@@ -170,13 +170,11 @@ hf download Antoinegg1/pedia_model \
 bash train_tool_server/scripts/launch_tool_server.sh
 ```
 
-In another shell on Node A, get the IP address:
+In another shell on Node A, get the `<node-a-ip>` IP address:
 
 ```bash
 hostname -i
 ```
-
-The RL launcher builds the endpoint as `http://<node-a-ip>:30888/get_observation`.
 
 ### Node B: RL training
 
