@@ -25,10 +25,17 @@ from geo_edit.environment.task.google_vision_qa_task import GoogleVisionQATask
 from geo_edit.environment.task.openai_compatible_vision_qa_task import (
     OpenAICompatibleVisionQATask,
 )
-from geo_edit.utils.logger import setup_logger
 from geo_edit.utils.stats import save_global_meta_info
 
-logger = setup_logger(__name__)
+logging.disable(logging.CRITICAL)
+try:
+    from datasets import disable_progress_bars
+except ImportError:
+    disable_progress_bars = None
+if disable_progress_bars is not None:
+    disable_progress_bars()
+
+
 # ---------------------------
 # Worker globals (one per process)
 # ----------------------------
@@ -60,6 +67,8 @@ def _init_worker(
     temperature: float = 1.0,
     max_output_tokens: "int | None" = None,
 ):
+    logging.disable(logging.CRITICAL)
+
     from typing import cast, Literal
 
     tool_mode = cast(Literal["auto", "force", "direct"], use_tools)
@@ -212,7 +221,6 @@ def _run_one_task(task_payload: dict):
     if isinstance(extra_kwargs, dict):
         task_kwargs.update(extra_kwargs)
     if text_only:
-        logger.info(f"[{task_id}] text-only")
         task_kwargs["text_only"] = True
 
     # Get available tools from router (controlled by config.yaml and use_tools mode)
@@ -244,12 +252,6 @@ def _run_one_task(task_payload: dict):
             for i in range(_WORKER_MAX_TOOL_CALLS):
                 action, extra_info = _WORKER_AGENT.act(task.contents)
 
-                if hasattr(action, "choices") and action.choices:
-                    model_text = action.choices[0].message.content or ""
-                else:
-                    model_text = getattr(action, "output_text", "") or ""
-                logger.warning(f"[{task_id}] Step {i + 1} model output:\n{model_text}")
-
                 function_call_part_list = task.parse_action(
                     step=i + 1, action=action, extra_info=extra_info
                 )
@@ -257,31 +259,13 @@ def _run_one_task(task_payload: dict):
                 if not function_call_part_list:
                     break
 
-                contents_before = (
-                    len(task.contents) if isinstance(task.contents, list) else 0
-                )
                 task.update_observation_from_action(function_call_part_list)
-                if isinstance(task.contents, list):
-                    for msg in task.contents[contents_before:]:
-                        role = msg.get("role", "")
-                        text = (
-                            msg.get("content", "")
-                            if isinstance(msg.get("content"), str)
-                            else ""
-                        )
-                        if role == "tool" and text:
-                            logger.warning(
-                                f"[{task_id}] Step {i + 1} tool result:\n{text[:500]}"
-                            )
 
             if (
                 task.state
                 and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS
                 and _WORKER_TOOL_ROUTER.tool_mode != "direct"
             ):
-                logger.info(
-                    f"[{task_id}] Max tool calls ({_WORKER_MAX_TOOL_CALLS}), forcing final answer"
-                )
                 force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
                 task.append_prompt(force_prompt)
                 _WORKER_AGENT.config.generate_config = (
@@ -301,7 +285,6 @@ def _run_one_task(task_payload: dict):
                     else:
                         output = getattr(action, "output_text", "") or ""
                     if not response_validator(output):
-                        logger.warning(f"[{task_id}] Attempt {attempt + 1}/{max_attempts}: response_validator rejected, retrying")
                         continue
                 meta_info = task.save_trajectory()
                 return True, meta_info
@@ -312,7 +295,6 @@ def _run_one_task(task_payload: dict):
             return False, None
 
         except Exception as e:
-            logging.error(f"[{task_id}] failed (attempt {attempt + 1}): {e}")
             if attempt < max_attempts - 1:
                 continue
             _persist_failure(task_save_dir, task_id, f"exception:{type(e).__name__}", task, _WORKER_AGENT, str(e)[:500])
@@ -474,22 +456,16 @@ def main():
     os.makedirs(output_path, exist_ok=True)
 
     dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
-    logger.info(f"Dataset size: {len(dataset)}")
 
     if args.sample_rate < 1.0:
         sample_size = int(len(dataset) * args.sample_rate)
         dataset = dataset.shuffle(seed=seed).select(range(sample_size))
-        logger.info(f"Sampled {sample_size} examples")
 
     dataset_spec = get_dataset_spec(args.dataset_name)
     # Dedup image saves via DatasetSpec.prepare_images() when image_dedup_key is set
     # (e.g. reason_map: 11 unique city maps shared across 1448 rows -> 11 PIL decodes, not 1448).
     dataset, _pre_saved_images = dataset_spec.prepare_images(dataset, output_path)
     tool_mode = args.use_tools
-    if tool_mode == "direct" and dataset_spec.notool_prompt_template is None:
-        logger.warning(
-            f"Dataset {dataset_spec.name}: no notool template, using tool template"
-        )
 
     tool_router = ToolRouter(
         tool_mode=tool_mode,
@@ -503,8 +479,6 @@ def main():
         enabled_agent_names = manager.get_all_actor_names()
     else:
         enabled_agent_names = []
-    if enabled_agent_names:
-        logger.info(f"Initialized {len(enabled_agent_names)} Ray tool actors")
 
     n_trajectories = args.n_trajectories
     meta_info_list = []
@@ -529,10 +503,7 @@ def main():
             else:
                 pending_items.append((item, traj_id))
 
-    logger.info(f"Already done: {len(meta_info_list)}, Pending: {len(pending_items)}")
-
     n_workers = max(1, int(args.max_concurrent_requests))
-    logger.info(f"Starting {n_workers} worker processes")
 
     ctx = mp.get_context("spawn")
     with ctx.Pool(
@@ -693,7 +664,6 @@ def main():
     save_global_meta_info(
         output_path, meta_info_list, max_tool_calls=args.max_tool_calls
     )
-    logger.info(f"Completed. Total valid: {len(meta_info_list)}")
 
     tool_router.shutdown_agents()
 

@@ -11,3 +11,6 @@ iopath
 ftfy
 timm
 open_clip_torch
+datasets
+colorlog
+tqdm

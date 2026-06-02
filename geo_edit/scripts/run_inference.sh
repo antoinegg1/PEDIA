@@ -63,7 +63,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-unset ROCR_VISIBLE_DEVICES
 export PEDIA_DATA PEDIA_MODEL
 
 # ─── 1. Start local Ray head for ToolRouter-created actors ───
@@ -120,7 +119,7 @@ python -m geo_edit.scripts.async_generate_with_tool_call_api \
     --temperature 0 --sample_rate 1.0 \
     --use_tools "$USE_TOOLS" --enable_tools $ENABLE_TOOLS \
     --node_resource "$NODE_RESOURCE" \
-    --max_concurrent_requests 16 --max_tool_calls 10 \
+    --max_concurrent_requests 64 --max_tool_calls 10 \
     --no_image_compression
 
 echo "[run_inference] done — output at $OUT_DIR"
