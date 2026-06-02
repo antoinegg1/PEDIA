@@ -241,7 +241,7 @@ hf download FSCCS/ReasonMap-Plus --repo-type dataset \
     --local-dir ./pedia_data/raw/reasonmap_plus
 ```
 
-Run the synthesis pipeline. The script reads `./pedia_data/raw/reasonmap_plus/train.parquet`, uses 1% of the data by default as an example run (`SAMPLE_RATE=0.01`).
+Run the synthesis pipeline. The script first converts the HF data under `./pedia_data/raw/reasonmap_plus/` into `./pedia_data/raw/reasonmap_plus_prepared/train.parquet`, then uses 1% of the data by default as an example run (`SAMPLE_RATE=0.01`).
 
 ```bash
 export JUDGE_API_KEY=<your-openai-key>

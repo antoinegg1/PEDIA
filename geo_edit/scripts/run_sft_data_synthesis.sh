@@ -2,7 +2,8 @@
 # Synthesize SFT data from ReasonMap-Plus.
 #
 # Defaults:
-#   source dataset: ./pedia_data/raw/reasonmap_plus/train.parquet
+#   raw HF data:    ./pedia_data/raw/reasonmap_plus/data/train*.parquet
+#   prepared data:  ./pedia_data/raw/reasonmap_plus_prepared/train.parquet
 #   sampler model:  gpt-5-2025-08-07 via OpenAI-compatible API
 #   augment model:  ./pedia_model/Qwen3-VL-235B-A22B-Thinking served by vLLM
 #   sample rate:    0.01 (1% example run)
@@ -12,8 +13,12 @@ set -euo pipefail
 
 PEDIA_MODEL="${PEDIA_MODEL:-./pedia_model}"
 PEDIA_DATA="${PEDIA_DATA:-./pedia_data}"
-DATASET_PATH="${DATASET_PATH:-${PEDIA_DATA}/raw/reasonmap_plus/train.parquet}"
 DATASET_SPLIT="${DATASET_SPLIT:-train}"
+RAW_DATASET_DIR="${RAW_DATASET_DIR:-${PEDIA_DATA}/raw/reasonmap_plus}"
+RAW_DATASET_PATH="${RAW_DATASET_PATH:-${RAW_DATASET_DIR}/data/${DATASET_SPLIT}.parquet}"
+PREPARED_DATASET_DIR="${PREPARED_DATASET_DIR:-${PEDIA_DATA}/raw/reasonmap_plus_prepared}"
+DATASET_PATH="${DATASET_PATH:-${PREPARED_DATASET_DIR}/${DATASET_SPLIT}.parquet}"
+FORCE_PREPARE_DATASET="${FORCE_PREPARE_DATASET:-0}"
 DATASET_NAME="${DATASET_NAME:-reason_map_plus}"
 SFT_DATASET_NAME="${SFT_DATASET_NAME:-reasonmap_plus}"
 SFT_DATA_SOURCE="${SFT_DATA_SOURCE:-reasonmap_plus}"
@@ -91,6 +96,114 @@ trap cleanup EXIT
 
 unset ROCR_VISIBLE_DEVICES
 export PEDIA_DATA PEDIA_MODEL
+
+if [ "$FORCE_PREPARE_DATASET" = "1" ] || [ ! -f "$DATASET_PATH" ]; then
+    echo "[run_sft_data_synthesis] preparing ReasonMap-Plus data: $RAW_DATASET_PATH -> $DATASET_PATH"
+    RAW_DATASET_DIR="$RAW_DATASET_DIR" \
+    RAW_DATASET_PATH="$RAW_DATASET_PATH" \
+    DATASET_SPLIT="$DATASET_SPLIT" \
+    DATASET_PATH="$DATASET_PATH" \
+    python - <<'PY'
+import base64
+import binascii
+import io
+import os
+from pathlib import Path
+
+from datasets import Dataset, Image, load_dataset
+
+raw_root = Path(os.environ["RAW_DATASET_DIR"])
+raw_path = Path(os.environ["RAW_DATASET_PATH"])
+split = os.environ["DATASET_SPLIT"]
+out_path = Path(os.environ["DATASET_PATH"])
+allowed_types = {"Counting1", "Counting2", "Counting3", "TorF1", "TorF2"}
+raw_files = [raw_path]
+
+if not raw_path.exists():
+    shard_dir = raw_path.parent
+    candidates = sorted(shard_dir.glob(f"{split}-*.parquet"))
+    if candidates:
+        raw_files = candidates
+        raw_path = candidates[0]
+    else:
+        raise SystemExit(
+            f"Raw ReasonMap-Plus parquet not found: {raw_path}. "
+            "Download FSCCS/ReasonMap-Plus to RAW_DATASET_DIR first."
+        )
+
+
+def _candidate_paths(value: str):
+    clean = value[2:] if value.startswith("./") else value
+    path = Path(value)
+    if path.is_absolute():
+        yield path
+    yield raw_path.parent / value
+    yield raw_path.parent / clean
+    yield raw_root / value
+    yield raw_root / clean
+
+
+def _image_bytes(value):
+    if isinstance(value, dict) and value.get("bytes"):
+        return value["bytes"]
+    if isinstance(value, dict) and value.get("path"):
+        value = value["path"]
+    if hasattr(value, "save"):
+        buffer = io.BytesIO()
+        value.save(buffer, format=getattr(value, "format", None) or "PNG")
+        return buffer.getvalue()
+    if value is None:
+        raise FileNotFoundError("missing figure/image value")
+
+    text = str(value)
+    for candidate in _candidate_paths(text):
+        if candidate.is_file():
+            return candidate.read_bytes()
+
+    encoded = text.split(",", 1)[1] if text.startswith("data:image") and "," in text else text
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        decoded = b""
+    if decoded.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff")):
+        return decoded
+
+    searched = ", ".join(str(path) for path in _candidate_paths(text))
+    raise FileNotFoundError(
+        f"Could not resolve ReasonMap-Plus figure/image '{text}'. "
+        f"Searched: {searched}"
+    )
+
+
+dataset = load_dataset("parquet", data_files=[str(path) for path in raw_files], split="train")
+records = []
+for row_index, item in enumerate(dataset):
+    qtype = str(item.get("type", ""))
+    if qtype not in allowed_types:
+        continue
+
+    record = dict(item)
+    record["id"] = str(
+        item.get("id")
+        or item.get("question_id")
+        or f"reason_map_plus_{row_index}"
+    )
+    image_value = record.get("image") or record.get("figure")
+    record["image"] = {"bytes": _image_bytes(image_value), "path": None}
+    records.append(record)
+
+if not records:
+    raise SystemExit(
+        f"No supported ReasonMap-Plus rows found in {raw_path}; "
+        f"expected types: {', '.join(sorted(allowed_types))}."
+    )
+
+out_path.parent.mkdir(parents=True, exist_ok=True)
+prepared = Dataset.from_list(records).cast_column("image", Image(decode=False))
+prepared.to_parquet(str(out_path))
+print(f"[run_sft_data_synthesis] prepared {len(records)} rows at {out_path}")
+PY
+fi
 
 if ray status --address="127.0.0.1:${RAY_PORT}" >/dev/null 2>&1; then
     echo "[run_sft_data_synthesis] reusing existing Ray head on :$RAY_PORT"
