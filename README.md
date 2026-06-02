@@ -89,12 +89,11 @@ hf download Antoinegg1/pedia_model \
     --include "PEDIA_8B_v1/*" "PaddleOCR-VL-1.5/*" "sam3.1/*" "grounding-dino-base/*" \
     --local-dir ./pedia_model
 
-# ID evaluation benchmarks, including visual_probe_easy
+# visual_probe_easy evaluation benchmarks visual_probe_easy
 hf download Antoinegg1/pedia_data --repo-type dataset \
-    --include "eval/id_data.tar" \
+    --include "eval/id/visual_probe_easy.parquet" \
     --local-dir ./pedia_data
 
-tar -xf ./pedia_data/eval/id_data.tar -C ./pedia_data/eval
 ```
 
 ### Run inference
