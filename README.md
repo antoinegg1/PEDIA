@@ -90,8 +90,9 @@ hf download Antoinegg1/pedia_model \
     --local-dir ./pedia_model
 
 # visual_probe_easy evaluation benchmarks visual_probe_easy
-hf download Antoinegg1/pedia_data --repo-type dataset \
-    --include "eval/id/visual_probe_easy.parquet" \
+hf download Antoinegg1/pedia_data  \
+    eval/id/visual_probe_easy.parquet \
+    --repo-type dataset \
     --local-dir ./pedia_data
 
 ```
@@ -102,7 +103,7 @@ hf download Antoinegg1/pedia_data --repo-type dataset \
 DATASET=visual_probe_easy bash geo_edit/scripts/run_inference.sh
 ```
 
-The script defaults to tool actors on GPUs `0,1,2,3` and vLLM `DP_SIZE=4` on GPUs `4,5,6,7`. To evaluate another registered dataset, extract the corresponding eval tarball and run with `DATASET=<dataset_id>`.
+The script defaults to tool actors on GPUs `0,1,2,3` and vLLM `DP_SIZE=4` on GPUs `4,5,6,7`. To evaluate another registered dataset, download its parquet file listed in [Registered evaluation dataset ids](#registered-evaluation-dataset-ids) and run with `DATASET=<dataset_id>`.
 
 ### Score outputs
 
@@ -136,8 +137,28 @@ All released data lives in [Antoinegg1/pedia_data](https://huggingface.co/datase
 |---|---|
 | `pedia_sft_v1.tar` | SFT data archive: `train.json` and images |
 | `pedia_rl_v1.tar` | RL train and validation parquet files plus images |
-| `eval/id_data.tar` | In-distribution evaluation benchmarks |
-| `eval/ood_data.tar` | Out-of-distribution evaluation benchmarks |
+| `eval/id/*.parquet` | In-distribution evaluation benchmarks |
+| `eval/ood/*.parquet` | Out-of-distribution evaluation benchmarks |
+
+### Registered evaluation dataset ids
+
+Use these ids as `DATASET=<dataset_id>` for `geo_edit/scripts/run_inference.sh` and `geo_edit/scripts/run_eval.sh`.
+
+| Split | `dataset_id` | Data file |
+|---|---|---|
+| ID | `visual_probe_easy` | `eval/id/visual_probe_easy.parquet` |
+| ID | `visual_probe_medium` | `eval/id/visual_probe_medium.parquet` |
+| ID | `visual_probe_hard` | `eval/id/visual_probe_hard.parquet` |
+| ID | `reason_map` | `eval/id/reason_map.parquet` |
+| ID | `reason_map_plus` | `eval/id/reason_map_plus.parquet` |
+| ID | `map_trace` | `eval/id/map_trace.parquet` |
+| OOD | `visworld_cube` | `eval/ood/visworld_cube.parquet` |
+| OOD | `visworld_mmsi` | `eval/ood/visworld_mmsi.parquet` |
+| OOD | `visworld_ballgame` | `eval/ood/visworld_ballgame.parquet` |
+| OOD | `visworld_paperfolding` | `eval/ood/visworld_paperfolding.parquet` |
+| OOD | `mapeval_visual` | `eval/ood/mapeval_visual.parquet` |
+| OOD | `babyvision` | `eval/ood/babyvision.parquet` |
+| OOD | `vstar_bench` | `eval/ood/vstar_bench.parquet` |
 
 ## SFT Training
 
