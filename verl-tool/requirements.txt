@@ -6,7 +6,6 @@ vllm==0.11.0
 # Exact transformers commit needed by Qwen3-VL-Thinking; not on PyPI.
 git+https://github.com/huggingface/transformers.git@b3e3c3d
 
-flash-attn==2.7.4.post1
 accelerate
 peft
 datasets

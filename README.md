@@ -186,7 +186,8 @@ conda activate peria-rl
 unset ROCR_VISIBLE_DEVICES
 cd verl-tool
 TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=48 NVCC_THREADS=4 \
-    pip install -r requirements.txt
+python -m pip install flash-attn==2.7.4.post1 --no-build-isolation
+pip install -r requirements.txt
 cd ..
 
 hf download Antoinegg1/pedia_model \
@@ -229,14 +230,14 @@ hf download FSCCS/ReasonMap-Plus --repo-type dataset \
     --local-dir ./pedia_data/raw/reasonmap_plus
 ```
 
-Run the synthesis pipeline. The script reads `./pedia_data/raw/reasonmap_plus/train.parquet`, uses 1% of the data by default as an example run (`SAMPLE_RATE=0.01`), starts local Ray tool actors for trajectory sampling, then launches vLLM with `TP_SIZE=8` and `DP_SIZE=1` for filtering/diversification before SFT conversion.
+Run the synthesis pipeline. The script reads `./pedia_data/raw/reasonmap_plus/train.parquet`, uses 1% of the data by default as an example run (`SAMPLE_RATE=0.01`).
 
 ```bash
 export JUDGE_API_KEY=<your-openai-key>
 bash geo_edit/scripts/run_sft_data_synthesis.sh
 ```
 
-The generated SFT data is written to `./pedia_data/pedia_sft_v1/`. Override `SAMPLE_RATE`, `DATASET_SPLIT`, `TRAJ_DIR`, or `SFT_OUT_DIR` if you want a different run size or output location.
+The generated SFT data is written to `./pedia_data/pedia_sft_v1/`. 
 
 ## Dataset and Models
 
