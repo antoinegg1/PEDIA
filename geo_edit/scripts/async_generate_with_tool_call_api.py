@@ -29,7 +29,34 @@ from geo_edit.environment.task.openai_compatible_vision_qa_task import (
 )
 from geo_edit.utils.stats import save_global_meta_info
 
-logging.disable(logging.CRITICAL)
+_TOOL_FAILURE_LOG_PATTERNS = (
+    "Tool execution failed",
+    "Tool execution raised exception",
+    "Tool agent",
+    "PaddleOCR-VL failed",
+    "GroundingDINO detection failed",
+    "SAM3",
+)
+
+
+class _ToolFailureLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.WARNING:
+            return False
+        message = record.getMessage()
+        return any(pattern in message for pattern in _TOOL_FAILURE_LOG_PATTERNS)
+
+
+def _configure_tool_failure_logging():
+    logging.disable(logging.NOTSET)
+    root = logging.getLogger()
+    root.setLevel(logging.WARNING)
+    for handler in root.handlers:
+        if not any(isinstance(f, _ToolFailureLogFilter) for f in handler.filters):
+            handler.addFilter(_ToolFailureLogFilter())
+
+
+_configure_tool_failure_logging()
 try:
     from datasets import disable_progress_bars
 except ImportError:
@@ -69,7 +96,7 @@ def _init_worker(
     temperature: float = 1.0,
     max_output_tokens: "int | None" = None,
 ):
-    logging.disable(logging.CRITICAL)
+    _configure_tool_failure_logging()
 
     from typing import cast, Literal
 
@@ -99,6 +126,7 @@ def _init_worker(
         from geo_edit.utils.worker_utils import connect_to_ray_agents
 
         connect_to_ray_agents(_WORKER_TOOL_ROUTER, enabled_agent_names)
+    _configure_tool_failure_logging()
 
     max_output_tokens = max_output_tokens
     if model_type in {"Google", "OpenAI"} and not api_key:
@@ -178,6 +206,7 @@ def _init_worker(
 
 
 def _run_one_task(task_payload: dict):
+    _configure_tool_failure_logging()
     with open(os.devnull, "w", encoding="utf-8") as devnull:
         with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
             return _run_one_task_quiet(task_payload)
