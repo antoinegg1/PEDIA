@@ -206,6 +206,17 @@ TOOL_SERVER_IP=<node-a-ip> \
 
 RL outputs are saved under `./outputs/mixed_rl/`. For 4-node training, use [`verl-tool/examples/train/geo_edit/run_pedia_rl_v1_multinode.sh`](verl-tool/examples/train/geo_edit/run_pedia_rl_v1_multinode.sh) with the Ray startup scripts in the same directory.
 
+By default, RL uses rule-based rewards only. To fully reproduce our experiments, enable the LLM-judge fallback used by the `geo_vision_qa` reward manager:
+
+```bash
+export JUDGE_API_KEY=<your-openai-key>
+# Optional:
+export JUDGE_API_BASE=https://api.openai.com/v1
+export JUDGE_MODEL=gpt-5-mini-2025-08-07
+```
+
+For multi-node RL, export the same `JUDGE_API_KEY` / `JUDGE_API_BASE` / `JUDGE_MODEL` variables before starting the Ray head, workers, and training launcher.
+
 ## Data Synthesis
 
 SFT data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation). The example below synthesizes trajectories from [FSCCS/ReasonMap-Plus](https://huggingface.co/datasets/FSCCS/ReasonMap-Plus) and converts them to LLaMA-Factory SFT format.
