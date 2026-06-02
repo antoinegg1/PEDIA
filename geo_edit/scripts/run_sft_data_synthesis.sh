@@ -3,7 +3,9 @@
 #
 # Defaults:
 #   source dataset: ./pedia_data/raw/reasonmap_plus/train.parquet
-#   base model:     ./pedia_model/Qwen3-VL-8B-Thinking
+#   sampler model:  gpt-5-2025-08-07 via OpenAI-compatible API
+#   augment model:  ./pedia_model/Qwen3-VL-235B-A22B-Thinking served by vLLM
+#   sample rate:    0.01 (1% example run)
 #   outputs:        ./outputs/trajectories/reason_map_plus*
 #                   ./pedia_data/pedia_sft_v1
 set -euo pipefail
@@ -13,25 +15,48 @@ PEDIA_DATA="${PEDIA_DATA:-./pedia_data}"
 DATASET_PATH="${DATASET_PATH:-${PEDIA_DATA}/raw/reasonmap_plus/train.parquet}"
 DATASET_SPLIT="${DATASET_SPLIT:-train}"
 DATASET_NAME="${DATASET_NAME:-reason_map_plus}"
-MODEL_PATH="${MODEL_PATH:-${PEDIA_MODEL}/Qwen3-VL-8B-Thinking}"
-MODEL_NAME="${MODEL_NAME:-$(basename "$MODEL_PATH")}"
+SFT_DATASET_NAME="${SFT_DATASET_NAME:-reasonmap_plus}"
+SFT_DATA_SOURCE="${SFT_DATA_SOURCE:-reasonmap_plus}"
 
 TRAJ_ROOT="${TRAJ_ROOT:-./outputs/trajectories}"
 TRAJ_DIR="${TRAJ_DIR:-${TRAJ_ROOT}/${DATASET_NAME}}"
 AUG_DIR="${AUG_DIR:-${TRAJ_ROOT}/${DATASET_NAME}_augmented}"
 SFT_OUT_DIR="${SFT_OUT_DIR:-${PEDIA_DATA}/pedia_sft_v1}"
 
+# Stage 1: iterative sampling with an OpenAI-compatible API model.
+API_KEY="${API_KEY:-${JUDGE_API_KEY:-${OPENAI_API_KEY:-}}}"
+API_BASE="${API_BASE:-https://api.openai.com/v1}"
+SAMPLING_MODEL="${SAMPLING_MODEL:-gpt-5-2025-08-07}"
+SAMPLING_MODEL_TYPE="${SAMPLING_MODEL_TYPE:-OpenAI}"
+SAMPLE_RATE="${SAMPLE_RATE:-0.01}"
+N_TRAJECTORIES="${N_TRAJECTORIES:-1}"
+MAX_CONCURRENT_REQUESTS="${MAX_CONCURRENT_REQUESTS:-32}"
+MAX_ITERATIVE_ROUNDS="${MAX_ITERATIVE_ROUNDS:-4}"
+
+# Stage 2: filter + diversify with a local vLLM endpoint.
+AUG_MODEL_PATH="${AUG_MODEL_PATH:-${PEDIA_MODEL}/Qwen3-VL-235B-A22B-Thinking}"
+AUG_MODEL_NAME="${AUG_MODEL_NAME:-$(basename "$AUG_MODEL_PATH")}"
 VLLM_PORT="${VLLM_PORT:-8000}"
-API_BASE="${API_BASE:-http://127.0.0.1:${VLLM_PORT}}"
-DP_SIZE="${DP_SIZE:-4}"
-TP_SIZE="${TP_SIZE:-1}"
+AUG_API_BASE="${AUG_API_BASE:-http://127.0.0.1:${VLLM_PORT}/v1}"
+DP_SIZE="${DP_SIZE:-1}"
+TP_SIZE="${TP_SIZE:-8}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.8}"
 MAX_IMAGES_PER_PROMPT="${MAX_IMAGES_PER_PROMPT:-5}"
 EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
-VLLM_LOG="${VLLM_LOG:-/tmp/log/vllm_${MODEL_NAME}_sft_synthesis.log}"
-VLLM_CUDA_VISIBLE_DEVICES="${VLLM_CUDA_VISIBLE_DEVICES:-4,5,6,7}"
+VLLM_LOG="${VLLM_LOG:-/tmp/log/vllm_${AUG_MODEL_NAME}_sft_synthesis.log}"
+VLLM_CUDA_VISIBLE_DEVICES="${VLLM_CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 ALLOWED_MEDIA_PATH="${ALLOWED_MEDIA_PATH:-$(pwd)}"
+
+JUDGE_API_KEY="${JUDGE_API_KEY:-$API_KEY}"
+JUDGE_API_BASE="${JUDGE_API_BASE:-$API_BASE}"
+JUDGE_MODEL="${JUDGE_MODEL:-gpt-5-mini-2025-08-07}"
+AUG_API_KEY="${AUG_API_KEY:-$API_KEY}"
+AUG_MODEL="${AUG_MODEL:-$AUG_MODEL_PATH}"
+AUG_MAX_CONCURRENT="${AUG_MAX_CONCURRENT:-16}"
+AUG_MAX_LLM_WORKERS="${AUG_MAX_LLM_WORKERS:-32}"
+AUG_TEMPERATURE="${AUG_TEMPERATURE:-1.0}"
+AUG_REQUESTS_PER_MINUTE="${AUG_REQUESTS_PER_MINUTE:-128}"
 
 ENABLE_TOOLS="${ENABLE_TOOLS:-map general}"
 RAY_PORT="${RAY_PORT:-6379}"
@@ -39,34 +64,28 @@ TOOL_NUM_GPUS="${TOOL_NUM_GPUS:-4}"
 TOOL_CUDA_VISIBLE_DEVICES="${TOOL_CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 NODE_RESOURCE="${NODE_RESOURCE:-tool_agent}"
 
-SAMPLE_RATE="${SAMPLE_RATE:-1.0}"
-N_TRAJECTORIES="${N_TRAJECTORIES:-1}"
-MAX_CONCURRENT_REQUESTS="${MAX_CONCURRENT_REQUESTS:-16}"
-MAX_ITERATIVE_ROUNDS="${MAX_ITERATIVE_ROUNDS:-5}"
-JUDGE_API_KEY="${JUDGE_API_KEY:-${OPENAI_API_KEY:-}}"
-JUDGE_API_BASE="${JUDGE_API_BASE:-https://api.openai.com/v1}"
-JUDGE_MODEL="${JUDGE_MODEL:-gpt-4o-mini}"
-AUG_API_BASE="${AUG_API_BASE:-$JUDGE_API_BASE}"
-AUG_API_KEY="${AUG_API_KEY:-$JUDGE_API_KEY}"
-AUG_MODEL="${AUG_MODEL:-$JUDGE_MODEL}"
-SFT_DATASET_NAME="${SFT_DATASET_NAME:-trajectory_sft}"
-
-: "${JUDGE_API_KEY:?Set JUDGE_API_KEY or OPENAI_API_KEY before running.}"
+: "${API_KEY:?Set API_KEY, JUDGE_API_KEY, or OPENAI_API_KEY before running.}"
+: "${JUDGE_API_KEY:?Set JUDGE_API_KEY, API_KEY, or OPENAI_API_KEY before running.}"
 
 mkdir -p "$TRAJ_DIR" "$AUG_DIR" "$SFT_OUT_DIR" "$(dirname "$VLLM_LOG")"
 
 VLLM_PID=""
 STARTED_RAY=0
 
+stop_ray_if_started() {
+    if [ "$STARTED_RAY" = "1" ]; then
+        echo "[run_sft_data_synthesis] stopping Ray head on :$RAY_PORT"
+        ray stop --force >/dev/null 2>&1 || true
+        STARTED_RAY=0
+    fi
+}
+
 cleanup() {
     if [ -n "$VLLM_PID" ]; then
         echo "[run_sft_data_synthesis] stopping vLLM pid=$VLLM_PID"
         kill "$VLLM_PID" 2>/dev/null || true
     fi
-    if [ "$STARTED_RAY" = "1" ]; then
-        echo "[run_sft_data_synthesis] stopping Ray head on :$RAY_PORT"
-        ray stop --force >/dev/null 2>&1 || true
-    fi
+    stop_ray_if_started
 }
 trap cleanup EXIT
 
@@ -82,10 +101,31 @@ else
     STARTED_RAY=1
 fi
 
+python -m geo_edit.scripts.iterative_sampling_generate \
+    --api_key "$API_KEY" \
+    --api_base "$API_BASE" \
+    --model_name_or_path "$SAMPLING_MODEL" \
+    --model_type "$SAMPLING_MODEL_TYPE" \
+    --dataset_path "$DATASET_PATH" \
+    --dataset_split "$DATASET_SPLIT" \
+    --dataset_name "$DATASET_NAME" \
+    --output_dir "$TRAJ_DIR" \
+    --sample_rate "$SAMPLE_RATE" \
+    --n_trajectories "$N_TRAJECTORIES" \
+    --max_concurrent_requests "$MAX_CONCURRENT_REQUESTS" \
+    --max_iterative_rounds "$MAX_ITERATIVE_ROUNDS" \
+    --judge_model "$JUDGE_MODEL" \
+    --judge_api_key "$JUDGE_API_KEY" \
+    --judge_api_base "$JUDGE_API_BASE" \
+    --node_resource "$NODE_RESOURCE" \
+    --enable_tools $ENABLE_TOOLS
+
+stop_ray_if_started
+
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=600
-echo "[run_sft_data_synthesis] launching vLLM on GPUs $VLLM_CUDA_VISIBLE_DEVICES dp=$DP_SIZE tp=$TP_SIZE model=$MODEL_PATH log=$VLLM_LOG"
+echo "[run_sft_data_synthesis] launching vLLM on GPUs $VLLM_CUDA_VISIBLE_DEVICES dp=$DP_SIZE tp=$TP_SIZE model=$AUG_MODEL_PATH log=$VLLM_LOG"
 CUDA_VISIBLE_DEVICES="$VLLM_CUDA_VISIBLE_DEVICES" nohup python -m vllm.entrypoints.openai.api_server \
-    --model "$MODEL_PATH" \
+    --model "$AUG_MODEL_PATH" \
     --host 0.0.0.0 \
     --port "$VLLM_PORT" \
     --trust-remote-code \
@@ -112,24 +152,6 @@ until curl -sf "http://127.0.0.1:${VLLM_PORT}/v1/models" > /dev/null; do
 done
 echo "[run_sft_data_synthesis] vLLM endpoint ready"
 
-python -m geo_edit.scripts.iterative_sampling_generate \
-    --api_base "$API_BASE" \
-    --dataset_path "$DATASET_PATH" \
-    --dataset_split "$DATASET_SPLIT" \
-    --dataset_name "$DATASET_NAME" \
-    --output_dir "$TRAJ_DIR" \
-    --model_name_or_path "$MODEL_PATH" \
-    --model_type SGLang \
-    --sample_rate "$SAMPLE_RATE" \
-    --n_trajectories "$N_TRAJECTORIES" \
-    --max_concurrent_requests "$MAX_CONCURRENT_REQUESTS" \
-    --node_resource "$NODE_RESOURCE" \
-    --enable_tools $ENABLE_TOOLS \
-    --judge_api_key "$JUDGE_API_KEY" \
-    --judge_api_base "$JUDGE_API_BASE" \
-    --judge_model "$JUDGE_MODEL" \
-    --max_iterative_rounds "$MAX_ITERATIVE_ROUNDS"
-
 python -m geo_edit.data_preprocess.augment_traj_data \
     --src-dir "$TRAJ_DIR" \
     --dst-dir "$AUG_DIR" \
@@ -137,15 +159,24 @@ python -m geo_edit.data_preprocess.augment_traj_data \
     --api-key "$AUG_API_KEY" \
     --model "$AUG_MODEL" \
     --judge-api-base "$JUDGE_API_BASE" \
-    --judge-api-key "$JUDGE_API_KEY" \
     --judge-model "$JUDGE_MODEL" \
-    --filter-wrong-answers
+    --judge-api-key "$JUDGE_API_KEY" \
+    --filter-wrong-answers \
+    --filter-answer-leakage \
+    --leakage-check-mode full \
+    --filter-brute-force \
+    --filter-tool-mismatch \
+    --max-concurrent "$AUG_MAX_CONCURRENT" \
+    --max-llm-workers "$AUG_MAX_LLM_WORKERS" \
+    --temperature "$AUG_TEMPERATURE" \
+    --requests-per-minute "$AUG_REQUESTS_PER_MINUTE" \
+    --reuse-filter
 
 python -m geo_edit.data_preprocess.convert_trajectory_to_sft \
     --src_dir "$AUG_DIR" \
     --dst_dir "$SFT_OUT_DIR" \
     --dataset_name "$SFT_DATASET_NAME" \
-    --data_source "$DATASET_NAME" \
+    --data_source "$SFT_DATA_SOURCE" \
     --enable_tools $ENABLE_TOOLS
 
 echo "[run_sft_data_synthesis] done - SFT data at $SFT_OUT_DIR"

@@ -2,7 +2,7 @@
 # Trained model + checkpoint exported under pedia_model/pedia_8b_SFT_v1/.
 # Dataset (train.json + dataset_info.json + indexed images/) lives under pedia_data.
 
-model_name_or_path: ../pedia_model/Qwen3-VL-8B-Thinking
+model_name_or_path: ./pedia_model/Qwen3-VL-8B-Thinking
 image_max_pixels: 6291456
 video_max_pixels: 16384
 trust_remote_code: true

@@ -139,7 +139,7 @@ hf download Antoinegg1/pedia_data --repo-type dataset \
     --include "pedia_sft_v1.tar" \
     --local-dir ./pedia_data
 
-tar -xf ./pedia_data/pedia_sft_v1.tar -C ./pedia_data
+tar -xvf ./pedia_data/pedia_sft_v1.tar -C ./pedia_data
 ```
 
 Run SFT on one 8-GPU node:
@@ -197,7 +197,7 @@ hf download Antoinegg1/pedia_data --repo-type dataset \
     --include "pedia_rl_v1.tar" \
     --local-dir ./pedia_data
 
-tar -xf ./pedia_data/pedia_rl_v1.tar -C ./pedia_data
+tar -xvf ./pedia_data/pedia_rl_v1.tar -C ./pedia_data
 
 TOOL_SERVER_IP=<node-a-ip> \
     bash verl-tool/examples/train/geo_edit/run_pedia_rl_v1_singlenode.sh
@@ -215,28 +215,28 @@ conda activate peria-inference
 pip install -U -r geo_edit/requirements.txt -e ./geo_edit
 ```
 
-Download the public Qwen base model, PERIA tool backends, and ReasonMap-Plus:
+Download the PERIA tool backends, the augmentation model, and ReasonMap-Plus:
 
 ```bash
-hf download Qwen/Qwen3-VL-8B-Thinking \
-    --local-dir ./pedia_model/Qwen3-VL-8B-Thinking
-
 hf download Antoinegg1/pedia_model \
     --include "PaddleOCR-VL-1.5/*" "sam3.1/*" "grounding-dino-base/*" \
     --local-dir ./pedia_model
+
+hf download Qwen/Qwen3-VL-235B-A22B-Thinking \
+    --local-dir ./pedia_model/Qwen3-VL-235B-A22B-Thinking
 
 hf download FSCCS/ReasonMap-Plus --repo-type dataset \
     --local-dir ./pedia_data/raw/reasonmap_plus
 ```
 
-Run the synthesis pipeline. The script reads `./pedia_data/raw/reasonmap_plus/train.parquet`, starts local Ray tool actors and vLLM, then runs trajectory sampling, filtering/diversification, and SFT conversion.
+Run the synthesis pipeline. The script reads `./pedia_data/raw/reasonmap_plus/train.parquet`, uses 1% of the data by default as an example run (`SAMPLE_RATE=0.01`), starts local Ray tool actors for trajectory sampling, then launches vLLM with `TP_SIZE=8` and `DP_SIZE=1` for filtering/diversification before SFT conversion.
 
 ```bash
 export JUDGE_API_KEY=<your-openai-key>
 bash geo_edit/scripts/run_sft_data_synthesis.sh
 ```
 
-The generated SFT data is written to `./pedia_data/pedia_sft_v1/`. Override `SAMPLE_RATE`, `DATASET_SPLIT`, `TRAJ_DIR`, or `SFT_OUT_DIR` if you want a smaller run or a different output location.
+The generated SFT data is written to `./pedia_data/pedia_sft_v1/`. Override `SAMPLE_RATE`, `DATASET_SPLIT`, `TRAJ_DIR`, or `SFT_OUT_DIR` if you want a different run size or output location.
 
 ## Dataset and Models
 
