@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import logging
 import multiprocessing as mp
@@ -10,22 +11,7 @@ from io import BytesIO
 
 from datasets import load_dataset
 from PIL import Image
-import tqdm as _tqdm_module
-from tqdm import tqdm as _dataset_tqdm
-
-
-def _disabled_tqdm(*args, **kwargs):
-    kwargs["disable"] = True
-    return _dataset_tqdm(*args, **kwargs)
-
-
-_tqdm_module.tqdm = _disabled_tqdm
-for _tqdm_submodule in ("auto", "std", "asyncio"):
-    try:
-        _mod = __import__(f"tqdm.{_tqdm_submodule}", fromlist=["tqdm"])
-        _mod.tqdm = _disabled_tqdm
-    except ImportError:
-        pass
+from tqdm import tqdm
 
 from geo_edit.agents.api_agent import AgentConfig, APIBasedAgent
 from geo_edit.config import (
@@ -192,6 +178,12 @@ def _init_worker(
 
 
 def _run_one_task(task_payload: dict):
+    with open(os.devnull, "w", encoding="utf-8") as devnull:
+        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+            return _run_one_task_quiet(task_payload)
+
+
+def _run_one_task_quiet(task_payload: dict):
     """
     Worker: do NOT mkdir here, do NOT save image here.
     Image must already be saved and passed in as a path.
@@ -544,7 +536,7 @@ def main():
         inflight = []  # list[(task_id, AsyncResult)]
         submit_idx = 0
 
-        pbar = _dataset_tqdm(
+        pbar = tqdm(
             total=len(pending_items),
             desc="processing",
             miniters=1,
