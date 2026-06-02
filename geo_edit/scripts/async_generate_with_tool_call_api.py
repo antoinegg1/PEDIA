@@ -528,7 +528,13 @@ def main():
         inflight = []  # list[(task_id, AsyncResult)]
         submit_idx = 0
 
-        pbar = tqdm(total=len(pending_items), desc="processing")
+        pbar = tqdm(
+            total=len(pending_items),
+            desc="processing",
+            miniters=1,
+            dynamic_ncols=True,
+        )
+        last_refresh = time.monotonic()
 
         while submit_idx < len(pending_items) or inflight:
             # submit up to n_workers tasks; mkdir+save image just before submit
@@ -549,6 +555,8 @@ def main():
                     with open(meta_path, "r", encoding="utf-8") as f:
                         meta_info = json.loads(f.readline().strip())
                     meta_info_list.append(meta_info)
+                    pbar.update(1)
+                    pbar.refresh()
                     continue
 
                 os.makedirs(task_base_dir, exist_ok=True)
@@ -651,10 +659,21 @@ def main():
                     if ok and meta_info is not None:
                         meta_info_list.append(meta_info)
                     pbar.update(1)
+                    pbar.refresh()
                     any_done = True
                 else:
                     still_inflight.append((task_id, ar))
             inflight = still_inflight
+
+            now = time.monotonic()
+            if any_done or now - last_refresh >= 1.0:
+                pbar.set_postfix(
+                    submitted=submit_idx,
+                    running=len(inflight),
+                    refresh=False,
+                )
+                pbar.refresh()
+                last_refresh = now
 
             if not any_done:
                 time.sleep(0.05)
