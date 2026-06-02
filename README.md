@@ -186,7 +186,7 @@ conda activate peria-rl
 unset ROCR_VISIBLE_DEVICES
 cd verl-tool
 TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=48 NVCC_THREADS=4 \
-python -m pip install flash-attn==2.7.4.post1 --no-build-isolation
+pip install flash-attn==2.7.4.post1 --no-build-isolation
 pip install -r requirements.txt
 cd ..
 
