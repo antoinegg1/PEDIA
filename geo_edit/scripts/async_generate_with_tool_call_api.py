@@ -4,12 +4,28 @@ import logging
 import multiprocessing as mp
 import os
 import shutil
+import threading
 import time
 from io import BytesIO
 
 from datasets import load_dataset
 from PIL import Image
-from tqdm import tqdm
+import tqdm as _tqdm_module
+from tqdm import tqdm as _dataset_tqdm
+
+
+def _disabled_tqdm(*args, **kwargs):
+    kwargs["disable"] = True
+    return _dataset_tqdm(*args, **kwargs)
+
+
+_tqdm_module.tqdm = _disabled_tqdm
+for _tqdm_submodule in ("auto", "std", "asyncio"):
+    try:
+        _mod = __import__(f"tqdm.{_tqdm_submodule}", fromlist=["tqdm"])
+        _mod.tqdm = _disabled_tqdm
+    except ImportError:
+        pass
 
 from geo_edit.agents.api_agent import AgentConfig, APIBasedAgent
 from geo_edit.config import (
@@ -528,15 +544,33 @@ def main():
         inflight = []  # list[(task_id, AsyncResult)]
         submit_idx = 0
 
-        pbar = tqdm(
+        pbar = _dataset_tqdm(
             total=len(pending_items),
             desc="processing",
             miniters=1,
             dynamic_ncols=True,
         )
         last_refresh = time.monotonic()
+        completed_count = 0
+        progress_lock = threading.Lock()
 
-        while submit_idx < len(pending_items) or inflight:
+        def _mark_completed(ok: bool, meta_info=None):
+            nonlocal completed_count
+            with progress_lock:
+                if ok and meta_info is not None:
+                    meta_info_list.append(meta_info)
+                completed_count += 1
+                pbar.update(1)
+                pbar.refresh()
+
+        def _on_task_done(result):
+            ok, meta_info = result
+            _mark_completed(ok, meta_info)
+
+        def _on_task_error(_exc):
+            _mark_completed(False, None)
+
+        while completed_count < len(pending_items):
             # submit up to n_workers tasks; mkdir+save image just before submit
             while submit_idx < len(pending_items) and len(inflight) < n_workers:
                 item, traj_id = pending_items[submit_idx]
@@ -554,9 +588,7 @@ def main():
                 if os.path.exists(meta_path):
                     with open(meta_path, "r", encoding="utf-8") as f:
                         meta_info = json.loads(f.readline().strip())
-                    meta_info_list.append(meta_info)
-                    pbar.update(1)
-                    pbar.refresh()
+                    _mark_completed(True, meta_info)
                     continue
 
                 os.makedirs(task_base_dir, exist_ok=True)
@@ -647,32 +679,27 @@ def main():
                     "response_validator": dataset_spec.response_validator,
                 }
 
-                ar = pool.apply_async(_run_one_task, (payload,))
+                ar = pool.apply_async(
+                    _run_one_task,
+                    (payload,),
+                    callback=_on_task_done,
+                    error_callback=_on_task_error,
+                )
                 inflight.append((f"{task_id}_traj{traj_id}", ar))
 
-            # harvest finished tasks
-            any_done = False
-            still_inflight = []
-            for task_id, ar in inflight:
-                if ar.ready():
-                    ok, meta_info = ar.get()
-                    if ok and meta_info is not None:
-                        meta_info_list.append(meta_info)
-                    pbar.update(1)
-                    pbar.refresh()
-                    any_done = True
-                else:
-                    still_inflight.append((task_id, ar))
-            inflight = still_inflight
+            before_inflight = len(inflight)
+            inflight = [(task_id, ar) for task_id, ar in inflight if not ar.ready()]
+            any_done = len(inflight) != before_inflight
 
             now = time.monotonic()
             if any_done or now - last_refresh >= 1.0:
-                pbar.set_postfix(
-                    submitted=submit_idx,
-                    running=len(inflight),
-                    refresh=False,
-                )
-                pbar.refresh()
+                with progress_lock:
+                    pbar.set_postfix(
+                        submitted=submit_idx,
+                        running=len(inflight),
+                        refresh=False,
+                    )
+                    pbar.refresh()
                 last_refresh = now
 
             if not any_done:
