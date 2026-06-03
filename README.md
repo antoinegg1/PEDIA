@@ -4,9 +4,7 @@ This repository releases the official implementation of **PERIA: Perceive, Inter
 
 PERIA is a tool-augmented visual agent for spatial reasoning. It builds on a Qwen3-VL backbone and learns to actively call perception and interaction tools to acquire fine-grained spatial evidence before answering.
 
-Model checkpoints are hosted at [Antoinegg1/pedia_model](https://huggingface.co/Antoinegg1/pedia_model), and data is hosted at [Antoinegg1/pedia_data](https://huggingface.co/datasets/Antoinegg1/pedia_data).
-
-## Abstract
+## Abstract <!-- omit in toc -->
 
 Recent vision-language models (VLMs) show strong multimodal understanding, but they remain limited on spatial reasoning tasks that require active evidence acquisition and multi-step visual interaction. Relying only on implicit visual representations from vision encoders is often insufficient for recovering fine-grained spatial evidence. We introduce **PERIA**, a tool-augmented visual agent for spatial reasoning across map reasoning, visual probing, and vision reconstruction tasks.
 
@@ -14,22 +12,24 @@ PERIA uses two lightweight tool families: **vision perception tools** expose tex
 
 ### Table of Contents  <!-- omit in toc -->
 
-- [Abstract](#abstract)
 - [PERIA: Perceive, Interact, Reason for Spatial Reasoning](#peria-perceive-interact-reason-for-spatial-reasoning)
   - [Motivation of the PERIA method](#motivation-of-the-peria-method)
-  - [Tool-augmented reasoning](#tool-augmented-reasoning)
+  - [Training Pipeline for Tool-augmented reasoning](#training-pipeline-for-tool-augmented-reasoning)
   - [Results summary](#results-summary)
 - [Installation](#installation)
 - [Evaluation](#evaluation)
   - [Env setup](#env-setup)
   - [Run inference](#run-inference)
   - [Score outputs](#score-outputs)
-- [Dataset and Models](#dataset-and-models)
 - [SFT Training](#sft-training)
   - [Env setup](#env-setup-1)
 - [RL Training](#rl-training)
   - [Node A: tool server](#node-a-tool-server)
   - [Node B: RL training](#node-b-rl-training)
+- [Dataset and Models](#dataset-and-models)
+- [Data Synthesis](#data-synthesis)
+- [Citation](#citation)
+- [Acknowledgment](#acknowledgment)
 <!-- - [SFT Data Synthesis](#sft-data-synthesis) -->
 - [Citation](#citation)
 - [Acknowledgment](#acknowledgment)
@@ -38,25 +38,26 @@ PERIA uses two lightweight tool families: **vision perception tools** expose tex
 
 ### Motivation of the PERIA method
 
-![PERIA motivation](assets/figure1.png)
-
 Spatial reasoning often requires details that are easy to miss in a single forward pass: small text, map symbols, relative positions, object boundaries, and multi-step path constraints. PERIA treats these details as evidence to be acquired. Instead of relying only on the VLM's latent image representation, it lets the model call tools, observe their outputs, and refine its reasoning.
 
-### Tool-augmented reasoning
+![PERIA motivation](assets/figure1.png)
+
+### Training Pipeline for Tool-augmented reasoning
+
+PERIA is built around three components. First, the **tool sandbox** exposes both agent-based tools and deterministic function tools through a unified router. Agent-based tools handle open-ended visual perception, such as map OCR and segmentation, while function-based tools provide reliable visual utilities such as image labeling, bounding-box operations, path drawing, and region highlighting.
+
+Second, **SFT trajectory synthesis** uses a diverse task database and a stronger proprietary model to explore multi-turn tool-use trajectories. Correct trajectories are converted into executable SFT data, with thinking-style diversification applied before training the initial PERIA agent.
+
+Finally, **OR-GIGPO training** improves the initialized agent with grouped rollouts. Observation-relaxed grouping aligns trajectories with similar text-tool observations, while leaving unmatched image or text observations separate. PERIA then combines step-level and episode-level advantages for the PPO update.
 
 ![PERIA tool-augmented reasoning](assets/figure2.png)
-
-PERIA organizes tools into two families:
-
-- **Perception tools**: OCR, grounding, segmentation, and function tools that expose explicit textual, symbolic, and spatial evidence.
-- **Interaction tools**: crop, label, draw, path tracing, highlighting, and bbox operations that let the agent manipulate visual context and verify spatial relations.
-
 
 ### Results summary
 
 ![PERIA results summary](assets/image.png)
 
-PERIA-8B targets spatial reasoning workloads including visual probing, map reasoning, path tracing, and out-of-distribution visual reasoning. In our experiments, it improves the Qwen3-VL-8B backbone and remains competitive with much larger models such as Qwen3-VL-235B-A22B-Thinking and GPT-5 on spatial reasoning benchmarks.
+PERIA-8B substantially improves over the Qwen3-VL-8B-Thinking backbone, improving in-distribution benchmarks by 10.0% and out-of-distribution benchmarks by 4.4%. It also achieves performance comparable to much larger models such as Qwen3-VL-235B-A22B-Thinking and GPT-5 on spatial reasoning benchmarks.
+
 
 ## Installation
 
@@ -217,41 +218,6 @@ export JUDGE_MODEL=gpt-5-mini-2025-08-07
 
 For multi-node RL, export the same `JUDGE_API_KEY` / `JUDGE_API_BASE` / `JUDGE_MODEL` variables before starting the Ray head, workers, and training launcher.
 
-<!--
-## Data Synthesis
-
-SFT data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation). The example below synthesizes trajectories from [FSCCS/ReasonMap-Plus](https://huggingface.co/datasets/FSCCS/ReasonMap-Plus) and converts them to LLaMA-Factory SFT format.
-
-```bash
-conda create -n peria-inference python=3.11 -y
-conda activate peria-inference
-pip install -U -r geo_edit/requirements.txt -e ./geo_edit
-```
-
-Download the PERIA tool backends, the augmentation model, and ReasonMap-Plus:
-
-```bash
-hf download Antoinegg1/pedia_model \
-    --include "PaddleOCR-VL-1.5/*" "sam3.1/*" "grounding-dino-base/*" \
-    --local-dir ./pedia_model
-
-hf download Qwen/Qwen3-VL-235B-A22B-Thinking \
-    --local-dir ./pedia_model/Qwen3-VL-235B-A22B-Thinking
-
-hf download FSCCS/ReasonMap-Plus --repo-type dataset \
-    --local-dir ./pedia_data/raw/reasonmap_plus
-```
-
-Run the synthesis pipeline. The script first converts the HF data under `./pedia_data/raw/reasonmap_plus/` into `./pedia_data/raw/reasonmap_plus_prepared/train.parquet`, then uses 1% of the data by default as an example run (`SAMPLE_RATE=0.01`).
-
-```bash
-export JUDGE_API_KEY=<your-openai-key>
-bash geo_edit/scripts/run_sft_data_synthesis.sh
-```
-
-The generated SFT data is written to `./pedia_data/pedia_sft_v1/`.
--->
-
 ## Dataset and Models
 
 All released checkpoints live in [Antoinegg1/pedia_model](https://huggingface.co/Antoinegg1/pedia_model):
@@ -280,6 +246,11 @@ Registered evaluation dataset ids:
 - ID: `visual_probe_easy`, `visual_probe_medium`, `visual_probe_hard`, `reason_map`, `reason_map_plus`, `map_trace`
 - OOD: `visworld_cube`, `visworld_mmsi`, `visworld_ballgame`, `visworld_paperfolding`, `mapeval_visual`, `babyvision`, `vstar_bench`
 
+
+## Data Synthesis
+
+Data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation), but we do not provide a one-command recipe because each source dataset requires dataset-specific normalization of records, images, answers, IDs, and prompts. The core workflow is to sample multi-turn tool-use trajectories with `geo_edit.scripts.iterative_sampling_generate`, filter and diversify them with `geo_edit.data_preprocess.augment_traj_data`, and convert the retained trajectories into LLaMA-Factory SFT format with `geo_edit.data_preprocess.convert_trajectory_to_sft`.
+
 ## Citation
 
 ```bibtex
@@ -293,6 +264,6 @@ Registered evaluation dataset ids:
 
 ## Acknowledgment
 
-This repository benefits from [Qwen3-VL](https://github.com/QwenLM/Qwen3-VL), [AReaL](https://github.com/inclusionAI/AReaL), [verl](https://github.com/volcengine/verl), [verl-tool](https://github.com/volcengine/verl), [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory), [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), [SAM](https://github.com/facebookresearch/sam2), and [Grounding-DINO](https://github.com/IDEA-Research/GroundingDINO).
+This repository benefits from [verl-tool](https://github.com/volcengine/verl), [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory), [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), [SAM](https://github.com/facebookresearch/sam2), and [Grounding-DINO](https://github.com/IDEA-Research/GroundingDINO).
 
 Thanks to the authors for releasing these codebases.
