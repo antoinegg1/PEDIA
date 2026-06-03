@@ -39,7 +39,7 @@ regex
 tqdm
 pyyaml
 
-# === Editable installs (vendored verl + this repo + sibling geo_edit) ===
+# === Editable installs (vendored verl + this repo + sibling pedia) ===
 -e ./verl
 -e .
--e ../geo_edit/
+-e ../pedia/

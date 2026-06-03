@@ -8,11 +8,11 @@ tool_type = "geo_sam3"
 """
 
 from .base import register_tool
-from .geo_edit_base import GeoEditAgentToolBase
+from .pedia_base import PediaAgentToolBase
 
 
 @register_tool
-class GeoSam3Tool(GeoEditAgentToolBase):
+class GeoSam3Tool(PediaAgentToolBase):
     tool_type = "geo_sam3"
     agent_name = "sam3"
     enable_tools = [

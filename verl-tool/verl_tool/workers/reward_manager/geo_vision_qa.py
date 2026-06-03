@@ -132,7 +132,7 @@ def _compute_reasonmap_plus_score(prediction: str, ground_truth, qtype: str = ""
 
 def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) -> tuple[float, str]:
     """ReasonMap base: route topology verification. Returns (score, failure_reason)."""
-    from geo_edit.evaluation.reason_map_verifier import reason_map_score
+    from pedia.evaluation.reason_map_verifier import reason_map_score
 
     station_1 = extra.get("station_1", "")
     station_2 = extra.get("station_2", "")
@@ -178,8 +178,8 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
 
 def _compute_cartomapqa_score(prediction: str, ground_truth, data_source: str) -> float:
     try:
-        from geo_edit.evaluation.cartomapqa.extractors import extract_structured
-        from geo_edit.evaluation.cartomapqa.metrics import mml_match, name_listing_prf1
+        from pedia.evaluation.cartomapqa.extractors import extract_structured
+        from pedia.evaluation.cartomapqa.metrics import mml_match, name_listing_prf1
     except ImportError:
         return compute_score(prediction, ground_truth)
 
@@ -238,7 +238,7 @@ def _compute_cartomapqa_score(prediction: str, ground_truth, data_source: str) -
         return 1.0 if abs(pred_val - gt_val) / abs(gt_val) <= 0.15 else 0.0
 
     if data_source == "cartomapqa_srn":
-        from geo_edit.evaluation.cartomapqa.metrics import normalize_route, route_eval
+        from pedia.evaluation.cartomapqa.metrics import normalize_route, route_eval
         pred_route = extract_structured("cartomapqa_srn", prediction)
         gt_route = [item.strip() for item in gt.replace("[", "").replace("]", "").split(",")]
         if not pred_route:
@@ -301,7 +301,7 @@ def _compute_map_trace_score(
       ndtw >  hi                    -> reward = 0.0          (hard cliff from ``right_edge`` to 0)
       parse failure / not_success   -> reward = 0.0
     """
-    from geo_edit.evaluation.map_trace_verifier import map_trace_score
+    from pedia.evaluation.map_trace_verifier import map_trace_score
 
     try:
         ndtw, is_success, _ = map_trace_score(response, str(ground_truth))
@@ -397,7 +397,7 @@ class GeoVisionQARewardManager:
         api_key = os.environ.get("JUDGE_API_KEY")
         if api_key:
             try:
-                from geo_edit.evaluation.trajectory_judge import TrajectoryJudge
+                from pedia.evaluation.trajectory_judge import TrajectoryJudge
                 self.judge = TrajectoryJudge(
                     api_key=api_key,
                     model=os.environ.get("JUDGE_MODEL", "gpt-5-mini-2025-08-07"),
@@ -615,7 +615,7 @@ class GeoVisionQARewardManager:
             mtmf_naming_count = 0.0
             if data_source == "cartomapqa_rle":
                 try:
-                    from geo_edit.evaluation.cartomapqa.extractors import extract_structured
+                    from pedia.evaluation.cartomapqa.extractors import extract_structured
                     pred_data = extract_structured("cartomapqa_rle", prediction)
                     import re as _re
                     gt_str = str(ground_truth)
@@ -635,7 +635,7 @@ class GeoVisionQARewardManager:
                     pass
             elif data_source == "cartomapqa_stmf_counting":
                 try:
-                    from geo_edit.evaluation.cartomapqa.extractors import extract_structured
+                    from pedia.evaluation.cartomapqa.extractors import extract_structured
                     pred_val = extract_structured("cartomapqa_stmf_counting", prediction)
                     gt_val = int(str(ground_truth).strip())
                     if pred_val is not None:
@@ -648,8 +648,8 @@ class GeoVisionQARewardManager:
                 srn_count = 1.0
             elif data_source == "cartomapqa_mtmf":
                 try:
-                    from geo_edit.evaluation.cartomapqa.extractors import extract_structured
-                    from geo_edit.evaluation.cartomapqa.metrics import name_listing_prf1
+                    from pedia.evaluation.cartomapqa.extractors import extract_structured
+                    from pedia.evaluation.cartomapqa.metrics import name_listing_prf1
                     pred_data = extract_structured("cartomapqa_mtmf", prediction)
                     gt_data = json.loads(str(ground_truth))
                     if pred_data and isinstance(gt_data, dict):

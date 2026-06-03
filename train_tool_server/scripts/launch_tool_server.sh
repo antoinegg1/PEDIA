@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Launch geo_edit tool servers — one per agent + a router on the main port.
+# Launch pedia tool servers — one per agent + a router on the main port.
 # Auto-bootstraps a local Ray head (with the tool_agent resource) if none is
 # already running on RAY_PORT.
 #
 # Usage:
 #   bash launch_tool_server.sh                                          # all agents, auto-start ray
-#   bash launch_tool_server.sh geo_edit_function geo_chartr1            # specific agents
-#   PORT=30888 bash launch_tool_server.sh geo_edit_function geo_chartr1
+#   bash launch_tool_server.sh pedia_function geo_chartr1            # specific agents
+#   PORT=30888 bash launch_tool_server.sh pedia_function geo_chartr1
 #   SKIP_RAY_START=1 bash launch_tool_server.sh                         # join external ray (multi-node)
 #
 # Env overrides:
@@ -65,7 +65,7 @@ if [ $# -gt 0 ]; then
     AGENT_LIST=("$@")
 else
     AGENT_LIST=(
-        geo_edit_function
+        pedia_function
         geo_paddleocr
         geo_sam3
         # geo_chartr1

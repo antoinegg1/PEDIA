@@ -1,0 +1,739 @@
+import argparse
+import contextlib
+import json
+import logging
+import multiprocessing as mp
+import os
+import shutil
+import threading
+import time
+from io import BytesIO
+
+from datasets import load_dataset
+from PIL import Image
+from tqdm import tqdm
+
+from pedia.agents.api_agent import AgentConfig, APIBasedAgent
+from pedia.agents.agent_config import (
+    build_google_agent_configs,
+    build_api_agent_configs,
+)
+from pedia.utils.constants import MAX_TOOL_CALLS as DEFAULT_MAX_TOOL_CALLS
+from pedia.prompts import get_system_prompt
+from pedia.prompts.system_prompts import build_tool_system_prompt
+from pedia.datasets.task_registry import DATASET_SPECS, get_dataset_spec
+from pedia.tool_definitions import ToolRouter, format_tool_declarations_text
+from pedia.environment.task.google_vision_qa_task import GoogleVisionQATask
+from pedia.environment.task.openai_compatible_vision_qa_task import (
+    OpenAICompatibleVisionQATask,
+)
+from pedia.utils.stats import save_global_meta_info
+
+_TOOL_FAILURE_LOG_PATTERNS = (
+    "Tool execution failed",
+    "Tool execution raised exception",
+    "Tool agent",
+    "PaddleOCR-VL failed",
+    "GroundingDINO detection failed",
+    "SAM3",
+)
+
+
+class _ToolFailureLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.WARNING:
+            return False
+        message = record.getMessage()
+        return any(pattern in message for pattern in _TOOL_FAILURE_LOG_PATTERNS)
+
+
+def _configure_tool_failure_logging():
+    logging.disable(logging.NOTSET)
+    root = logging.getLogger()
+    root.setLevel(logging.WARNING)
+    for handler in root.handlers:
+        if not any(isinstance(f, _ToolFailureLogFilter) for f in handler.filters):
+            handler.addFilter(_ToolFailureLogFilter())
+
+
+_configure_tool_failure_logging()
+try:
+    from datasets import disable_progress_bars
+except ImportError:
+    disable_progress_bars = None
+if disable_progress_bars is not None:
+    disable_progress_bars()
+
+
+# ---------------------------
+# Worker globals (one per process)
+# ----------------------------
+_WORKER_AGENT: "APIBasedAgent | None" = None
+_WORKER_AGENT_CONFIGS = None
+_WORKER_OUTPUT_PATH: "str | None" = None
+_WORKER_MAX_TOOL_CALLS: "int | None" = None
+_WORKER_TASK_CLASS = None
+_WORKER_MODEL_TYPE: "str | None" = None
+_WORKER_SYSTEM_PROMPT: "str | None" = None
+_WORKER_API_MODE: "str | None" = None
+_WORKER_TOOL_ROUTER: "ToolRouter | None" = None
+_WORKER_ACTION_TAG_MODE: bool = False
+_WORKER_NO_IMAGE_COMPRESSION: bool = False
+
+
+def _init_worker(
+    api_key: str,
+    model_name_or_path: str,
+    model_type: str,
+    api_base: str,
+    port: int,
+    output_path: str,
+    max_tool_calls: int,
+    use_tools: str,  # "auto", "force", or "direct"
+    enable_tools: "list | None" = None,
+    enabled_agent_names: "list | None" = None,
+    no_image_compression: bool = False,
+    temperature: float = 1.0,
+    max_output_tokens: "int | None" = None,
+):
+    _configure_tool_failure_logging()
+
+    from typing import cast, Literal
+
+    tool_mode = cast(Literal["auto", "force", "direct"], use_tools)
+    global \
+        _WORKER_AGENT, \
+        _WORKER_AGENT_CONFIGS, \
+        _WORKER_OUTPUT_PATH, \
+        _WORKER_MAX_TOOL_CALLS, \
+        _WORKER_TASK_CLASS, \
+        _WORKER_MODEL_TYPE, \
+        _WORKER_SYSTEM_PROMPT, \
+        _WORKER_API_MODE, \
+        _WORKER_TOOL_ROUTER, \
+        _WORKER_ACTION_TAG_MODE, \
+        _WORKER_NO_IMAGE_COMPRESSION
+
+    _WORKER_NO_IMAGE_COMPRESSION = no_image_compression
+
+    # Create ToolRouter WITHOUT initializing Ray actors (main process already did that)
+    _WORKER_TOOL_ROUTER = ToolRouter(
+        tool_mode=tool_mode, enable_tools=enable_tools, skip_agent_init=True
+    )
+
+    # Connect to existing Ray actors created by main process
+    if enabled_agent_names:
+        from pedia.utils.worker_utils import connect_to_ray_agents
+
+        connect_to_ray_agents(_WORKER_TOOL_ROUTER, enabled_agent_names)
+    _configure_tool_failure_logging()
+
+    max_output_tokens = max_output_tokens
+    if model_type in {"Google", "OpenAI"} and not api_key:
+        raise ValueError("API key must be provided for Google/OpenAI models.")
+
+    # Determine api_mode based on model_type
+    if model_type == "Google":
+        api_mode = "google"
+    elif model_type in {"SGLang", "vLLM"} or (
+        api_base is not None and "matrixllm" in api_base
+    ):
+        api_mode = "chat_completions"
+    else:
+        api_mode = "responses"
+
+    # For vLLM/SGLang (self-trained models): use text-based <action> tag mode
+    # matching SFT/RL format. No API tools param; tool definitions in prompt text.
+    _WORKER_ACTION_TAG_MODE = model_type in {"SGLang", "vLLM"}
+
+    if _WORKER_ACTION_TAG_MODE:
+        # Build system prompt with tool definitions matching RL template
+        declarations = _WORKER_TOOL_ROUTER.get_available_declarations()
+        tool_defs_text = format_tool_declarations_text(declarations)
+        system_prompt = build_tool_system_prompt(tool_defs_text)
+        # Build config WITHOUT tools in API params (use a direct-mode router)
+        no_tool_router = ToolRouter(tool_mode="direct", skip_agent_init=True)
+        agent_configs = build_api_agent_configs(
+            no_tool_router,
+            api_mode=api_mode,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            system_prompt=system_prompt,
+        )
+        _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
+    else:
+        # Google/OpenAI API models: use native tool_calls for data collection
+        system_prompt = get_system_prompt(model_type, tool_mode)
+
+        if api_mode == "google":
+            agent_configs = build_google_agent_configs(
+                _WORKER_TOOL_ROUTER,
+                max_output_tokens=max_output_tokens,
+                thinking_level="low",
+                include_thoughts=True,
+                temperature=temperature,
+                system_prompt=system_prompt,
+            )
+            _WORKER_TASK_CLASS = GoogleVisionQATask
+        else:
+            agent_configs = build_api_agent_configs(
+                _WORKER_TOOL_ROUTER,
+                api_mode=api_mode,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                reasoning_level="low" if model_type == "OpenAI" else None,
+                system_prompt=system_prompt,
+            )
+            _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
+
+    config = AgentConfig(
+        model_type=model_type,
+        model_name=model_name_or_path,
+        api_key=api_key,
+        api_base=api_base,
+        port=port,
+        generate_config=agent_configs.generate_config,
+        n_retry=3,
+        api_mode=api_mode,
+    )
+    _WORKER_AGENT_CONFIGS = agent_configs
+    _WORKER_AGENT = APIBasedAgent(config)
+    _WORKER_OUTPUT_PATH = output_path
+    _WORKER_MAX_TOOL_CALLS = max_tool_calls
+    _WORKER_MODEL_TYPE = model_type
+    _WORKER_SYSTEM_PROMPT = system_prompt
+    _WORKER_API_MODE = api_mode
+
+
+def _run_one_task(task_payload: dict):
+    _configure_tool_failure_logging()
+    with open(os.devnull, "w", encoding="utf-8") as devnull:
+        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+            return _run_one_task_quiet(task_payload)
+
+
+def _run_one_task_quiet(task_payload: dict):
+    """
+    Worker: do NOT mkdir here, do NOT save image here.
+    Image must already be saved and passed in as a path.
+    Returns:
+      (ok: bool, meta_info: dict|None)
+    """
+    assert _WORKER_AGENT is not None, "Worker not initialized"
+    assert _WORKER_AGENT_CONFIGS is not None, "Worker not initialized"
+    assert _WORKER_MAX_TOOL_CALLS is not None, "Worker not initialized"
+    assert _WORKER_TOOL_ROUTER is not None, "Worker not initialized"
+
+    task_id = task_payload["id"]
+    task_save_dir = task_payload["task_save_dir"]
+    answer = task_payload["answer"]
+    image_path = task_payload["image_path"]
+    text_prompt = task_payload["prompt"]
+    text_only = task_payload.get("text_only", False)
+
+    meta_path = os.path.join(task_save_dir, "meta_info.jsonl")
+    if os.path.exists(meta_path):
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta_info = json.loads(f.readline().strip())
+        return True, meta_info
+
+    # Map model_type to lowercase for VisionQATask
+    model_type_map = {
+        "Google": "google",
+        "OpenAI": "openai",
+        "vLLM": "vllm",
+        "SGLang": "sglang",
+    }
+    model_type = model_type_map.get(_WORKER_MODEL_TYPE, "openai")
+
+    task_kwargs = {"model_type": model_type}
+    # Add api_mode for non-Google tasks
+    if _WORKER_API_MODE != "google":
+        task_kwargs["api_mode"] = _WORKER_API_MODE
+    if _WORKER_ACTION_TAG_MODE:
+        task_kwargs["action_tag_mode"] = True
+    if _WORKER_NO_IMAGE_COMPRESSION:
+        task_kwargs["max_image_base64_bytes"] = None
+    extra_kwargs = task_payload.get("task_kwargs")
+    if isinstance(extra_kwargs, dict):
+        task_kwargs.update(extra_kwargs)
+    if text_only:
+        task_kwargs["text_only"] = True
+
+    # Get available tools from router (controlled by config.yaml and use_tools mode)
+    tool_functions = _WORKER_TOOL_ROUTER.get_available_tools()
+    tool_return_types = _WORKER_TOOL_ROUTER.get_tool_return_types()
+
+    response_validator = task_payload.get("response_validator")
+    max_attempts = 5 if response_validator else 1
+
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            shutil.rmtree(task_save_dir, ignore_errors=True)
+            os.makedirs(task_save_dir, exist_ok=True)
+
+        task = _WORKER_TASK_CLASS(
+            task_id=task_id,
+            task_prompt=text_prompt,
+            task_answer=answer,
+            task_image_path=image_path,
+            tool_functions=tool_functions,
+            tool_return_types=tool_return_types,
+            save_dir=task_save_dir,
+            **task_kwargs,
+        )
+
+        _WORKER_AGENT.reset()
+        original_generate_config = _WORKER_AGENT.config.generate_config.copy()
+        try:
+            for i in range(_WORKER_MAX_TOOL_CALLS):
+                action, extra_info = _WORKER_AGENT.act(task.contents)
+
+                function_call_part_list = task.parse_action(
+                    step=i + 1, action=action, extra_info=extra_info
+                )
+
+                if not function_call_part_list:
+                    break
+
+                task.update_observation_from_action(function_call_part_list)
+
+            if (
+                task.state
+                and _WORKER_AGENT.step_count >= _WORKER_MAX_TOOL_CALLS
+                and _WORKER_TOOL_ROUTER.tool_mode != "direct"
+            ):
+                force_prompt = "Max tool calls reached. Please provide the final answer based on the information gathered so far."
+                task.append_prompt(force_prompt)
+                _WORKER_AGENT.config.generate_config = (
+                    _WORKER_AGENT_CONFIGS.force_final_generate_config
+                )
+                action, extra_info = _WORKER_AGENT.act(task.contents)
+                _WORKER_AGENT.config.generate_config = original_generate_config
+                task.parse_action(
+                    step=_WORKER_MAX_TOOL_CALLS + 1, action=action, extra_info=extra_info
+                )
+
+            if task.state:
+                if response_validator:
+                    output = ""
+                    if hasattr(action, "choices") and action.choices:
+                        output = action.choices[0].message.content or ""
+                    else:
+                        output = getattr(action, "output_text", "") or ""
+                    if not response_validator(output):
+                        continue
+                meta_info = task.save_trajectory()
+                return True, meta_info
+
+            if attempt < max_attempts - 1:
+                continue
+            _persist_failure(task_save_dir, task_id, "no_valid_response", task, _WORKER_AGENT, None)
+            return False, None
+
+        except Exception as e:
+            if attempt < max_attempts - 1:
+                continue
+            _persist_failure(task_save_dir, task_id, f"exception:{type(e).__name__}", task, _WORKER_AGENT, str(e)[:500])
+            return False, None
+
+    _persist_failure(task_save_dir, task_id, "exhausted", None, None, None)
+    return False, None
+
+
+def _persist_failure(save_dir, task_id, reason, task, agent, err_msg):
+    import json as _json
+    try:
+        os.makedirs(save_dir, exist_ok=True)
+        info = {"id": task_id, "status": "failed", "failure_reason": reason, "error": err_msg}
+        if task is not None:
+            try:
+                contents = getattr(task, "contents", [])
+                info["n_messages"] = len(contents) if isinstance(contents, list) else 0
+                info["total_steps"] = getattr(agent, "step_count", 0) if agent else 0
+            except Exception:
+                pass
+            try:
+                task.save_trajectory()
+            except Exception:
+                pass
+        with open(os.path.join(save_dir, "failed_meta.jsonl"), "w", encoding="utf-8") as f:
+            f.write(_json.dumps(info, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate content with tool calls using API models (multiprocess)."
+    )
+    parser.add_argument(
+        "--api_key", type=str, default=None, help="API key for the selected provider."
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Dataset id (auto-resolves parquet path + eval template via "
+             "pedia.evaluation.eval_datasets.DATASET_REGISTRY). If omitted, "
+             "--dataset_path + --dataset_name must both be supplied.",
+    )
+    parser.add_argument(
+        "--data_root",
+        type=str,
+        default="./pedia_data",
+        help="Root dir for registered parquets (default: ./pedia_data).",
+    )
+    parser.add_argument(
+        "--dataset_path", type=str, default=None, help="Path to the dataset file (override)."
+    )
+    parser.add_argument(
+        "--dataset_name",
+        type=str,
+        default=None,
+        choices=sorted(DATASET_SPECS.keys()),
+        help="Dataset adapter name (override).",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Path to save the output JSONL file.",
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        default="gemini-3-pro-preview",
+        help="Model name or path.",
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="Google",
+        choices=["Google", "OpenAI", "vLLM", "SGLang"],
+        help="Model provider.",
+    )
+    parser.add_argument(
+        "--use_tools",
+        type=str,
+        default="auto",
+        choices=["direct", "auto", "force"],
+        help="Tool mode: 'auto' = optional tool use, 'force' = require tool call, 'direct' = no tools",
+    )
+    parser.add_argument(
+        "--api_base",
+        type=str,
+        default=None,
+        help="Base URL for OpenAI/vLLM/SGLang OpenAI-compatible server.",
+    )
+    parser.add_argument(
+        "--port", type=int, default=None, help="Port for vLLM OpenAI-compatible server."
+    )
+    parser.add_argument(
+        "--max_concurrent_requests",
+        type=int,
+        default=8,
+        help="Number of worker processes (agent pool).",
+    )
+    parser.add_argument(
+        "--sample_rate", type=float, default=0.1, help="Sampling rate for the dataset."
+    )
+    parser.add_argument(
+        "--n_trajectories",
+        type=int,
+        default=1,
+        help="Number of trajectories to generate per task.",
+    )
+    parser.add_argument(
+        "--node_resource",
+        type=str,
+        default=None,
+        help="Ray custom resource name to schedule Tool Agents on specific nodes (e.g., 'tool_agent').",
+    )
+    parser.add_argument(
+        "--enable_tools",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Override enabled tools. Accepts tool names or categories. "
+        "Examples: --enable_tools map text_ocr, --enable_tools image_highlight bounding_box",
+    )
+    parser.add_argument(
+        "--max_tool_calls",
+        type=int,
+        default=DEFAULT_MAX_TOOL_CALLS,
+        help=f"Maximum number of tool calls per task (default: {DEFAULT_MAX_TOOL_CALLS}).",
+    )
+    parser.add_argument(
+        "--no_image_compression",
+        action="store_true",
+        help="Disable image compression (send original quality to API). Default: compress to 4MB base64.",
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=1.0, help="Sampling temperature.",
+    )
+    parser.add_argument(
+        "--max_output_tokens", type=int, default=None, help="Per-call max generation tokens.",
+    )
+    args = parser.parse_args()
+    if args.dataset:
+        from pedia.evaluation.eval_datasets import resolve_dataset
+        parquet_path, eval_template = resolve_dataset(args.dataset, args.data_root)
+        if args.dataset_path is None:
+            args.dataset_path = parquet_path
+        if args.dataset_name is None:
+            args.dataset_name = eval_template
+    if not args.dataset_path or not args.dataset_name:
+        parser.error("Either --dataset or both --dataset_path and --dataset_name must be provided.")
+    if args.model_type in {"Google", "OpenAI"} and not args.api_key:
+        raise ValueError("API key must be provided for Google/OpenAI models.")
+
+    seed = 42
+    output_path = args.output_dir
+    os.makedirs(output_path, exist_ok=True)
+
+    dataset = load_dataset("parquet", data_files=args.dataset_path)["train"]
+
+    if args.sample_rate < 1.0:
+        sample_size = int(len(dataset) * args.sample_rate)
+        dataset = dataset.shuffle(seed=seed).select(range(sample_size))
+
+    dataset_spec = get_dataset_spec(args.dataset_name)
+    # Dedup image saves via DatasetSpec.prepare_images() when image_dedup_key is set
+    # (e.g. reason_map: 11 unique city maps shared across 1448 rows -> 11 PIL decodes, not 1448).
+    dataset, _pre_saved_images = dataset_spec.prepare_images(dataset, output_path)
+    tool_mode = args.use_tools
+
+    tool_router = ToolRouter(
+        tool_mode=tool_mode,
+        enable_tools=args.enable_tools,
+        node_resource=args.node_resource or "tool_agent",
+    )
+    if tool_router.is_agent_enabled():
+        from pedia.environment.tool_agents import get_manager
+
+        manager = get_manager()
+        enabled_agent_names = manager.get_all_actor_names()
+    else:
+        enabled_agent_names = []
+
+    n_trajectories = args.n_trajectories
+    meta_info_list = []
+    pending_items = []  # list of (item, traj_id)
+
+    for item in dataset:
+        task_id = str(item[dataset_spec.id_key])
+        task_base_dir = os.path.join(output_path, task_id)
+
+        for traj_id in range(n_trajectories):
+            if n_trajectories == 1:
+                # Backward compatible: single trajectory uses task_base_dir directly
+                traj_save_dir = task_base_dir
+            else:
+                traj_save_dir = os.path.join(task_base_dir, f"traj_{traj_id}")
+            meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
+
+            if os.path.exists(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta_info = json.loads(f.readline().strip())
+                meta_info_list.append(meta_info)
+            else:
+                pending_items.append((item, traj_id))
+
+    n_workers = max(1, int(args.max_concurrent_requests))
+
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(
+        processes=n_workers,
+        initializer=_init_worker,
+        initargs=(
+            args.api_key,
+            args.model_name_or_path,
+            args.model_type,
+            args.api_base,
+            args.port,
+            output_path,
+            args.max_tool_calls,
+            tool_mode,
+            args.enable_tools,
+            enabled_agent_names,
+            args.no_image_compression,
+            args.temperature,
+            args.max_output_tokens,
+        ),
+    ) as pool:
+        inflight = []  # list[(task_id, AsyncResult)]
+        submit_idx = 0
+
+        pbar = tqdm(
+            total=len(pending_items),
+            desc="processing",
+            miniters=1,
+            dynamic_ncols=True,
+        )
+        last_refresh = time.monotonic()
+        completed_count = 0
+        progress_lock = threading.Lock()
+
+        def _mark_completed(ok: bool, meta_info=None):
+            nonlocal completed_count
+            with progress_lock:
+                if ok and meta_info is not None:
+                    meta_info_list.append(meta_info)
+                completed_count += 1
+                pbar.update(1)
+                pbar.refresh()
+
+        def _on_task_done(result):
+            ok, meta_info = result
+            _mark_completed(ok, meta_info)
+
+        def _on_task_error(_exc):
+            _mark_completed(False, None)
+
+        while completed_count < len(pending_items):
+            # submit up to n_workers tasks; mkdir+save image just before submit
+            while submit_idx < len(pending_items) and len(inflight) < n_workers:
+                item, traj_id = pending_items[submit_idx]
+                submit_idx += 1
+
+                task_id = str(item[dataset_spec.id_key])
+                task_base_dir = os.path.join(output_path, task_id)
+                if n_trajectories == 1:
+                    traj_save_dir = task_base_dir
+                else:
+                    traj_save_dir = os.path.join(task_base_dir, f"traj_{traj_id}")
+                meta_path = os.path.join(traj_save_dir, "meta_info.jsonl")
+
+                # if completed by other runs, load and skip
+                if os.path.exists(meta_path):
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta_info = json.loads(f.readline().strip())
+                    _mark_completed(True, meta_info)
+                    continue
+
+                os.makedirs(task_base_dir, exist_ok=True)
+                os.makedirs(traj_save_dir, exist_ok=True)
+
+                # Save input image(s) to task_base_dir (shared across trajectories).
+                # When prepare_images() already pre-saved a shared file (dedup case),
+                # reuse that path and skip the per-task decode/save entirely.
+                image_path = None
+                text_only = dataset_spec.image_key is None
+                if _pre_saved_images:
+                    image_path = _pre_saved_images.get(task_id)
+                    if image_path is None:
+                        text_only = True
+                elif dataset_spec.image_key:
+                    raw_image = item.get(dataset_spec.image_key)
+                    images = (
+                        raw_image
+                        if isinstance(raw_image, list)
+                        else [raw_image]
+                        if raw_image is not None
+                        else []
+                    )
+
+                    _parquet_dir = os.path.dirname(os.path.realpath(args.dataset_path))
+
+                    def _save_one(img, path):
+                        if isinstance(img, Image.Image):
+                            img.save(path)
+                        elif (
+                            isinstance(img, dict)
+                            and "bytes" in img
+                            and isinstance(img["bytes"], (bytes, bytearray))
+                        ):
+                            Image.open(BytesIO(img["bytes"])).save(path)
+                        elif (
+                            isinstance(img, dict)
+                            and isinstance(img.get("path"), str)
+                            and os.path.exists(img["path"])
+                        ):
+                            import shutil
+                            shutil.copy2(img["path"], path)
+                        elif isinstance(img, bytes):
+                            Image.open(BytesIO(img)).save(path)
+                        elif isinstance(img, str) and os.path.exists(img):
+                            import shutil
+                            shutil.copy2(img, path)
+                        elif isinstance(img, str) and os.path.exists(
+                            os.path.join(_parquet_dir, img)
+                        ):
+                            import shutil
+                            shutil.copy2(os.path.join(_parquet_dir, img), path)
+                        elif isinstance(img, str):
+                            import base64
+                            Image.open(BytesIO(base64.b64decode(img))).save(path)
+                        else:
+                            raise ValueError(f"Invalid image type: {type(img)}")
+
+                    if len(images) == 1:
+                        image_path = os.path.join(task_base_dir, "input_image.png")
+                        if not os.path.exists(image_path):
+                            _save_one(images[0], image_path)
+                    elif len(images) > 1:
+                        image_path = []
+                        for img_idx, img in enumerate(images):
+                            p = os.path.join(
+                                task_base_dir, f"input_image_{img_idx}.png"
+                            )
+                            if not os.path.exists(p):
+                                _save_one(img, p)
+                            image_path.append(p)
+                    else:
+                        text_only = True
+                else:
+                    text_only = True
+
+                payload = {
+                    "id": task_id,
+                    "traj_id": traj_id,
+                    "task_save_dir": traj_save_dir,
+                    "prompt": dataset_spec.build_prompt(
+                        item, tool_mode != "direct", unified=True
+                    ),
+                    "answer": dataset_spec.get_answer(item),
+                    "image_path": image_path,
+                    "text_only": text_only,
+                    "task_kwargs": dataset_spec.build_task_kwargs(item),
+                    "response_validator": dataset_spec.response_validator,
+                }
+
+                ar = pool.apply_async(
+                    _run_one_task,
+                    (payload,),
+                    callback=_on_task_done,
+                    error_callback=_on_task_error,
+                )
+                inflight.append((f"{task_id}_traj{traj_id}", ar))
+
+            before_inflight = len(inflight)
+            inflight = [(task_id, ar) for task_id, ar in inflight if not ar.ready()]
+            any_done = len(inflight) != before_inflight
+
+            now = time.monotonic()
+            if any_done or now - last_refresh >= 1.0:
+                with progress_lock:
+                    pbar.set_postfix(
+                        submitted=submit_idx,
+                        running=len(inflight),
+                        refresh=False,
+                    )
+                    pbar.refresh()
+                last_refresh = now
+
+            if not any_done:
+                time.sleep(0.05)
+
+        pbar.close()
+
+    save_global_meta_info(
+        output_path, meta_info_list, max_tool_calls=args.max_tool_calls
+    )
+
+    tool_router.shutdown_agents()
+
+
+if __name__ == "__main__":
+    main()

@@ -8,11 +8,11 @@ tool_type = "geo_paddleocr"
 """
 
 from .base import register_tool
-from .geo_edit_base import GeoEditAgentToolBase
+from .pedia_base import PediaAgentToolBase
 
 
 @register_tool
-class GeoPaddleocrTool(GeoEditAgentToolBase):
+class GeoPaddleocrTool(PediaAgentToolBase):
     tool_type = "geo_paddleocr"
     agent_name = "paddleocr"
     enable_tools = [

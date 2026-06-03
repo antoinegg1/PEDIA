@@ -6,7 +6,7 @@
 # Notes:
 # - vllm 0.17.0 requires torch >= 2.10, so this environment is intentionally
 #   separate from the peria-rl environment, which stays on torch 2.8.
-# - geo_edit is installed editable so Ray actors can import its modules.
+# - pedia is installed editable so Ray actors can import its modules.
 
 # === Torch / CUDA runtime ===
 torch>=2.10
@@ -43,6 +43,6 @@ regex
 tqdm
 pyyaml
 
-# === Editable installs (this repo + sibling geo_edit) ===
+# === Editable installs (this repo + sibling pedia) ===
 -e .
--e ../geo_edit/
+-e ../pedia/

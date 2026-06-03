@@ -47,7 +47,7 @@ extras_require = {
 setup(
     name="train-tool-server",
     version=__version__,
-    description="HTTP tool server for RL training - launches geo_edit agent backends + tool-aware router.",
+    description="HTTP tool server for RL training - launches pedia agent backends + tool-aware router.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     license="Apache-2.0",

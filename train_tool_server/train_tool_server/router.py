@@ -220,10 +220,10 @@ _TOOL_NAME_RE = _re.compile(r'"name"\s*:\s*"([^"]+)"')
 # =============================================================================
 # Static tool_type → function_name mapping
 # Mirrors enable_tools in train_tool_server/servers/tools/geo_*.py
-# and TOOL_CATEGORIES in geo_edit/tool_definitions/router.py
+# and TOOL_CATEGORIES in pedia/tool_definitions/router.py
 # =============================================================================
 TOOL_TYPE_FUNCTIONS = {
-    "geo_edit_function": [
+    "pedia_function": [
         "image_crop", "image_label", "draw_line",
         "draw_path", "bounding_box", "image_highlight",
     ],

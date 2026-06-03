@@ -79,7 +79,7 @@ We use `PEDIA_8B_v1` model and `visual_probe_easy` dataset as the running exampl
 ```bash
 conda create -n peria-inference python=3.11 -y
 conda activate peria-inference
-pip install -U -r geo_edit/requirements.txt -e ./geo_edit
+pip install -U -r pedia/requirements.txt -e ./pedia
 ```
 
 Download PERIA-8B, the tool backends, and extract the ID evaluation tarball:
@@ -101,7 +101,7 @@ hf download Antoinegg1/pedia_data  \
 ### Run inference
 
 ```bash
-DATASET=visual_probe_easy bash geo_edit/scripts/run_inference.sh
+DATASET=visual_probe_easy bash pedia/scripts/run_inference.sh
 ```
 
 The script defaults to tool actors on GPUs `0,1,2,3` and vLLM `DP_SIZE=4` on GPUs `4,5,6,7`. To evaluate another registered dataset, download its parquet file and run with `DATASET=<dataset_id>`; available ids are listed in [Dataset and Models](#dataset-and-models).
@@ -111,7 +111,7 @@ The script defaults to tool actors on GPUs `0,1,2,3` and vLLM `DP_SIZE=4` on GPU
 Use the same `peria-inference` environment from the inference step:
 
 ```bash
-DATASET=visual_probe_easy bash geo_edit/scripts/run_eval.sh
+DATASET=visual_probe_easy bash pedia/scripts/run_eval.sh
 ```
 
 Raw inference outputs are saved under `./outputs/eval_results/visual_probe_easy/PEDIA_8B_v1/`, and scored summaries are saved under `./outputs/eval_output/visual_probe_easy/PEDIA_8B_v1/`.
@@ -202,10 +202,10 @@ hf download Antoinegg1/pedia_data --repo-type dataset \
 tar -xvf ./pedia_data/pedia_rl_v1.tar -C ./pedia_data
 
 TOOL_SERVER_IP=<node-a-ip> \
-    bash verl-tool/examples/train/geo_edit/run_pedia_rl_v1_singlenode.sh
+    bash verl-tool/examples/train/pedia/run_pedia_rl_v1_singlenode.sh
 ```
 
-RL outputs are saved under `./outputs/mixed_rl/`. For 4-node training, use [`verl-tool/examples/train/geo_edit/run_pedia_rl_v1_multinode.sh`](verl-tool/examples/train/geo_edit/run_pedia_rl_v1_multinode.sh) with the Ray startup scripts in the same directory.
+RL outputs are saved under `./outputs/mixed_rl/`. For 4-node training, use [`verl-tool/examples/train/pedia/run_pedia_rl_v1_multinode.sh`](verl-tool/examples/train/pedia/run_pedia_rl_v1_multinode.sh) with the Ray startup scripts in the same directory.
 
 By default, RL uses rule-based rewards only. To fully reproduce our experiments, enable the LLM-judge fallback used by the `geo_vision_qa` reward manager:
 
@@ -249,7 +249,7 @@ Registered evaluation dataset ids:
 
 ## Data Synthesis
 
-Data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation), but we do not provide a one-command recipe because each source dataset requires dataset-specific normalization of records, images, answers, IDs, and prompts. The core workflow is to sample multi-turn tool-use trajectories with `geo_edit.scripts.iterative_sampling_generate`, filter and diversify them with `geo_edit.data_preprocess.augment_traj_data`, and convert the retained trajectories into LLaMA-Factory SFT format with `geo_edit.data_preprocess.convert_trajectory_to_sft`.
+Data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation), but we do not provide a one-command recipe because each source dataset requires dataset-specific normalization of records, images, answers, IDs, and prompts. The core workflow is to sample multi-turn tool-use trajectories with `pedia.scripts.iterative_sampling_generate`, filter and diversify them with `pedia.data_preprocess.augment_traj_data`, and convert the retained trajectories into LLaMA-Factory SFT format with `pedia.data_preprocess.convert_trajectory_to_sft`.
 
 ## Citation
 

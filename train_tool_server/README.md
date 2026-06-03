@@ -4,7 +4,7 @@ HTTP tool server for RL training pipelines. Boots a set of per-agent backends + 
 tool-aware FastAPI router that the rollout loop talks to via `POST /get_observation`.
 
 Forked from [verl-tool](https://github.com/volcengine/verl) and stripped down to
-just the geo_edit tool subset (paddleocr / sam3 / grounding_dino + CPU image ops).
+just the pedia tool subset (paddleocr / sam3 / grounding_dino + CPU image ops).
 
 ## Layout
 
@@ -29,8 +29,8 @@ train_tool_server/
         ├── __init__.py
         ├── base.py          # BaseTool + register_tool + auto-scans ALL_TOOLS
         ├── finish.py        # cleanup tool, always loaded
-        ├── geo_edit_base.py # GeoEditToolBase + GeoEditAgentToolBase
-        ├── geo_edit_function.py  # CPU image ops (crop, label, draw, bbox, highlight)
+        ├── pedia_base.py # PediaToolBase + PediaAgentToolBase
+        ├── pedia_function.py  # CPU image ops (crop, label, draw, bbox, highlight)
         ├── geo_paddleocr.py # OCR via PaddleOCR-VL (Ray + GPU)
         ├── geo_sam3.py      # segmentation via SAM 3.1 (Ray + GPU)
         └── geo_grounding_dino.py  # detection (Ray + GPU)
@@ -38,7 +38,7 @@ train_tool_server/
 
 ## Setup (per node)
 
-The repo expects a sibling `geo_edit/` repo at `../geo_edit` for tool implementations
+The repo expects a sibling `pedia/` repo at `../pedia` for tool implementations
 and model paths. Set those up first, then:
 
 ```bash
@@ -49,7 +49,7 @@ bash scripts/setup_env.sh
 This will:
 1. `pip install -r requirements.txt` (vllm, pinned transformers, fire, uvicorn, ray, ...)
 2. `pip install -e . --no-deps` (this repo, editable)
-3. `pip install -e ../geo_edit --no-deps` (sibling, editable)
+3. `pip install -e ../pedia --no-deps` (sibling, editable)
 
 ## Launch
 
@@ -61,7 +61,7 @@ ray start --head --port=6379
 bash scripts/launch_tool_server.sh
 
 # Or a subset:
-bash scripts/launch_tool_server.sh geo_edit_function geo_paddleocr
+bash scripts/launch_tool_server.sh pedia_function geo_paddleocr
 
 # Custom router port:
 PORT=30888 bash scripts/launch_tool_server.sh
@@ -83,7 +83,7 @@ Defaults assume these paths on the host filesystem:
 | geo_sam3 | `./pedia_model/sam3.1/sam3.1_multiplex.pt` |
 | geo_grounding_dino | `./pedia_model/grounding-dino-base` |
 
-Edit `geo_edit/tool_definitions/agents/{paddleocr_tool,sam3,grounding_dino}.py` to
+Edit `pedia/tool_definitions/agents/{paddleocr_tool,sam3,grounding_dino}.py` to
 change.
 
 ## How requests are routed
