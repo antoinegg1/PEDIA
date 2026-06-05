@@ -249,7 +249,7 @@ Registered evaluation dataset ids:
 
 ## Data Synthesis
 
-Data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation), but we do not provide a one-command recipe because each source dataset requires dataset-specific normalization of records, images, answers, IDs, and prompts. The core workflow is to sample multi-turn tool-use trajectories with `pedia.scripts.iterative_sampling_generate`, filter and diversify them with `pedia.data_preprocess.augment_traj_data`, and convert the retained trajectories into LLaMA-Factory SFT format with `pedia.data_preprocess.convert_trajectory_to_sft`.
+Data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation). The core workflow is to sample multi-turn tool-use trajectories with `pedia.scripts.iterative_sampling_generate`, filter and diversify them with `pedia.data_preprocess.augment_traj_data`, and convert the retained trajectories into LLaMA-Factory SFT format with `pedia.data_preprocess.convert_trajectory_to_sft`. Each source dataset requires dataset-specific normalization of records, images, answers, IDs, and prompts.
 
 ## Citation
 
