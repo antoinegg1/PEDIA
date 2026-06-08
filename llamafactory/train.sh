@@ -1,13 +1,13 @@
 #!/bin/bash
-# Single-machine 8-GPU SFT for pedia_sft_v1.
-# Dataset: pedia_data/pedia_sft_v1/
-# Model output: pedia_model/pedia_sft_v1/
+# Single-machine 8-GPU SFT for pedia_sft.
+# Dataset: pedia_data/pedia_sft/
+# Model output: pedia_model/pedia_8b_SFT/
 #
 # Overrides (env or CLI):
 #   NPROC=<n>        : GPUs per node            (default 8)
 #   MASTER_PORT=<n>  : torchrun rendezvous port (default 29501)
 #   Any LLaMA-Factory key=value pair appended after `--` is forwarded to the trainer,
-#   e.g. `bash train_v1.sh -- output_dir=/tmp/run1 learning_rate=5e-6`.
+#   e.g. `bash train.sh -- output_dir=/tmp/run1 learning_rate=5e-6`.
 #
 # Auto-resumes from the latest output_dir/checkpoint-* if present.
 set -euo pipefail
@@ -15,10 +15,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-CFG="configs/pedia_sft_v1.yaml"
+CFG="configs/pedia_sft.yaml"
 LOG_DIR="${SCRIPT_DIR}/logs"
 mkdir -p "${LOG_DIR}"
-LOG_FILE="${LOG_DIR}/pedia_sft_v1.$(date '+%Y%m%d_%H%M%S').log"
+LOG_FILE="${LOG_DIR}/pedia_sft.$(date '+%Y%m%d_%H%M%S').log"
 
 NPROC="${NPROC:-8}"
 MASTER_PORT="${MASTER_PORT:-29501}"

@@ -8,7 +8,7 @@
 #   augment model:  ./pedia_model/Qwen3-VL-235B-A22B-Thinking served by vLLM
 #   sample rate:    0.01 (1% example run)
 #   outputs:        ./outputs/trajectories/reason_map_plus*
-#                   ./pedia_data/pedia_sft_v1
+#                   ./pedia_data/pedia_sft
 set -euo pipefail
 
 PEDIA_MODEL="${PEDIA_MODEL:-./pedia_model}"
@@ -26,7 +26,7 @@ SFT_DATA_SOURCE="${SFT_DATA_SOURCE:-reasonmap_plus}"
 TRAJ_ROOT="${TRAJ_ROOT:-./outputs/trajectories}"
 TRAJ_DIR="${TRAJ_DIR:-${TRAJ_ROOT}/${DATASET_NAME}}"
 AUG_DIR="${AUG_DIR:-${TRAJ_ROOT}/${DATASET_NAME}_augmented}"
-SFT_OUT_DIR="${SFT_OUT_DIR:-${PEDIA_DATA}/pedia_sft_v1}"
+SFT_OUT_DIR="${SFT_OUT_DIR:-${PEDIA_DATA}/pedia_sft}"
 
 # Stage 1: iterative sampling with an OpenAI-compatible API model.
 API_KEY="${API_KEY:-${JUDGE_API_KEY:-${OPENAI_API_KEY:-}}}"

@@ -15,7 +15,7 @@ set -euo pipefail
 
 DATASET="${DATASET:-visual_probe_easy}"
 PEDIA_MODEL="${PEDIA_MODEL:-./pedia_model}"
-MODEL_PATH="${MODEL_PATH:-${PEDIA_MODEL}/PEDIA_8B_v1}"
+MODEL_PATH="${MODEL_PATH:-${PEDIA_MODEL}/PEDIA_8B}"
 MODEL_NAME="${MODEL_NAME:-$(basename "$MODEL_PATH")}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-./outputs/eval_results}"
 OUT_DIR="${OUTPUT_ROOT}/${DATASET}/${MODEL_NAME}"

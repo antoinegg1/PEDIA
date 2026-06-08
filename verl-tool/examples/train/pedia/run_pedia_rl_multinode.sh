@@ -2,41 +2,42 @@
 set -x
 
 # ============================================================
-# Single-node (1×8 GPU) RL training for pedia 8B v1.
-# Ray head is started inline (no separate ray_start_*.sh needed).
+# Multi-node (4×8 GPU) second-stage training for pedia
+# Requires an existing Ray cluster spanning all 4 nodes.
 #
-# Environment variables (optional):
-#   WORKSPACE        – default ./outputs/mixed_rl
-#   MODEL_PATH       – SFT checkpoint (default pedia_8b_SFT_v1)
+# Environment variables:
+#   WORKSPACE        – default: ./outputs/mixed_rl
+#   MODEL_PATH       – path to SFT checkpoint
 #   TOOL_SERVER_IP   – tool server IP (port defaults to 30888)
 #   TOOL_SERVER_URL  – full URL, or host/IP with port 30888 and /get_observation auto-added
-#   JUDGE_API_KEY / JUDGE_API_BASE / JUDGE_MODEL
+#   JUDGE_API_KEY / JUDGE_API_BASE / JUDGE_MODEL – LLM judge config
 # ============================================================
 
 WORKSPACE=${WORKSPACE:-./outputs/mixed_rl}
-model_name=${MODEL_PATH:-./pedia_model/pedia_8b_SFT_v1}
+model_name=${MODEL_PATH:-./pedia_model/pedia_8b_SFT}
 
-train_data="./pedia_data/pedia_rl_v1/train.parquet"
-val_data="./pedia_data/pedia_rl_v1/val.parquet"
-run_name="pedia-rl-v1-1node"
+train_data="./pedia_data/pedia_rl/train.parquet"
+val_data="./pedia_data/pedia_rl/val.parquet"
+run_name="mixed-gigpo-sim0_5"
+# run_name=mixed-gigpo-4B-4nodev2_0427
 rl_alg=gigpo
 gigpo_sim_threshold=0.9
-
-# ---- Cluster topology (single node) ----
+# ---- Cluster topology ----
 n_gpus_per_node=8
-n_nodes=1
+# n_nodes=2
+n_nodes=4
 
-# ---- Batch sizes (scaled to 1/4 of 4-node version) ----
-n=2
-batch_size=16
-ppo_mini_batch_size=64
+# ---- Batch sizes (scaled for 4 nodes) ----
+n=4
+batch_size=64
+ppo_mini_batch_size=256
 
 # ---- Sequence lengths ----
-max_prompt_length=16384
+max_prompt_length=16384 
 max_response_length=32768
 max_action_length=4096
 max_obs_length=8192
-max_obs_length_image=8192
+max_obs_length_image=8192 
 max_obs_length_text=6144
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
@@ -93,13 +94,7 @@ mkdir -p $WORKSPACE/logs/$run_name
 action_stop_tokens_file="$WORKSPACE/logs/$run_name/action_stop_tokens.txt"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
-# ---- Start local Ray head (1 node, all 8 GPUs) ----
-ray stop --force 2>/dev/null || true
-sleep 2
-ray start --head --port=6379 --num-gpus=$n_gpus_per_node --resources='{"tool_agent": 8}'
-sleep 4
-
-# ---- Tool server URL (default localhost) ----
+# ---- Resolve tool server URL ----
 if [ -n "${TOOL_SERVER_URL:-}" ]; then
     if [[ "$TOOL_SERVER_URL" == http://* || "$TOOL_SERVER_URL" == https://* ]]; then
         tool_server_url=$TOOL_SERVER_URL
@@ -109,22 +104,38 @@ if [ -n "${TOOL_SERVER_URL:-}" ]; then
 elif [ -n "${TOOL_SERVER_IP:-}" ]; then
     tool_server_url=http://$TOOL_SERVER_IP:30888/get_observation
 else
-    tool_server_url=http://127.0.0.1:30888/get_observation
+    WORKER_IP=$(python3 -c "
+import ray; ray.init(address='auto',ignore_reinit_error=True)
+for n in ray.nodes():
+    if n['Resources'].get('tool_agent',0)>0 and n['Alive']:
+        print(n['NodeManagerAddress']); break
+")
+    tool_server_url=http://$WORKER_IP:30888/get_observation
 fi
 echo "Using tool server at $tool_server_url"
 
-# ---- Verify Ray ----
+# ---- Verify Ray cluster has enough nodes ----
 python3 -c "
-import ray
+import ray, sys
 ray.init(address='auto', ignore_reinit_error=True)
-gpus = sum(n['Resources'].get('GPU', 0) for n in ray.nodes() if n['Alive'])
-print(f'Ray cluster: 1 node, {int(gpus)} GPUs')
-assert int(gpus) >= $n_gpus_per_node, f'expected {$n_gpus_per_node} GPUs but got {int(gpus)}'
+alive = [n for n in ray.nodes() if n['Alive']]
+total_gpus = sum(n['Resources'].get('GPU', 0) for n in alive)
+print(f'Ray cluster: {len(alive)} nodes, {int(total_gpus)} GPUs')
+expected = $n_nodes * $n_gpus_per_node
+if total_gpus < expected:
+    print(f'ERROR: need {expected} GPUs but only {int(total_gpus)} available')
+    sys.exit(1)
+print('Cluster OK')
 ray.shutdown()
 "
 
-# ---- Training ----
-trap 'ray stop --force 2>/dev/null || true' EXIT
+# When using a pre-started Ray cluster, env vars must be set on each node
+# BEFORE running `ray start`. Example for each worker node:
+#   export JUDGE_API_KEY=xxx JUDGE_API_BASE=xxx JUDGE_MODEL=xxx
+#   ray start --address=<head_ip>:6379
+#
+# Alternatively, start Ray workers with --runtime-env-json:
+#   ray start --address=<head_ip>:6379 \
 
 PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     algorithm.adv_estimator=$rl_alg  \
@@ -134,8 +145,8 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
-    data.val_batch_size=64 \
-    data.dataloader_num_workers=16 \
+    data.val_batch_size=256 \
+    data.dataloader_num_workers=64 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
@@ -178,7 +189,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.agent.enable_mtrl=$enable_mtrl \
     actor_rollout_ref.agent.max_action_length=$max_action_length \
     actor_rollout_ref.agent.tool_call_timeout=600 \
-    actor_rollout_ref.agent.max_concurrent_trajectories=64 \
+    actor_rollout_ref.agent.max_concurrent_trajectories=128 \
     +actor_rollout_ref.agent.dispatch_mode=work_queue \
     +actor_rollout_ref.agent.logprobs=True \
     actor_rollout_ref.rollout.calculate_log_probs=True \
@@ -213,7 +224,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     algorithm.use_kl_in_reward=False \
     +algorithm.overturn_masking=False \
     trainer.logger=['console'] \
-    trainer.project_name=pedia_rl \
+    trainer.project_name=mixed_rl \
     trainer.experiment_name=$run_name \
     trainer.val_before_train=False \
     trainer.default_hdfs_dir=null \

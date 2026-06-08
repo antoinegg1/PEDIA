@@ -13,9 +13,8 @@ PERIA uses two lightweight tool families: **vision perception tools** expose tex
 ### Table of Contents  <!-- omit in toc -->
 
 - [PERIA: Perceive, Interact, Reason for Spatial Reasoning](#peria-perceive-interact-reason-for-spatial-reasoning)
-  - [Motivation of the PERIA method](#motivation-of-the-peria-method)
-  - [Training Pipeline for Tool-augmented reasoning](#training-pipeline-for-tool-augmented-reasoning)
   - [Results summary](#results-summary)
+  - [Motivation of the PERIA method](#motivation-of-the-peria-method)
 - [Installation](#installation)
 - [Evaluation](#evaluation)
   - [Env setup](#env-setup)
@@ -27,7 +26,6 @@ PERIA uses two lightweight tool families: **vision perception tools** expose tex
   - [Node A: tool server](#node-a-tool-server)
   - [Node B: RL training](#node-b-rl-training)
 - [Dataset and Models](#dataset-and-models)
-- [Data Synthesis](#data-synthesis)
 - [Citation](#citation)
 - [Acknowledgment](#acknowledgment)
 <!-- - [SFT Data Synthesis](#sft-data-synthesis) -->
@@ -36,13 +34,19 @@ PERIA uses two lightweight tool families: **vision perception tools** expose tex
 
 ## PERIA: Perceive, Interact, Reason for Spatial Reasoning
 
+### Results summary
+
+![PERIA results summary](assets/image.png)
+
+PERIA-8B substantially improves over the Qwen3-VL-8B-Thinking backbone, improving in-distribution benchmarks by 10.0% and out-of-distribution benchmarks by 4.4%. It also achieves performance comparable to much larger models such as Qwen3-VL-235B-A22B-Thinking and GPT-5 on spatial reasoning benchmarks. More detailed comparisons and ablations could be found in the paper.
+
 ### Motivation of the PERIA method
 
 Spatial reasoning often requires details that are easy to miss in a single forward pass: small text, map symbols, relative positions, object boundaries, and multi-step path constraints. PERIA treats these details as evidence to be acquired. Instead of relying only on the VLM's latent image representation, it lets the model call tools, observe their outputs, and refine its reasoning.
 
 ![PERIA motivation](assets/figure1.png)
 
-### Training Pipeline for Tool-augmented reasoning
+<!-- ### Training Pipeline for Tool-augmented reasoning
 
 PERIA is built around three components. First, the **tool sandbox** exposes both agent-based tools and deterministic function tools through a unified router. Agent-based tools handle open-ended visual perception, such as map OCR and segmentation, while function-based tools provide reliable visual utilities such as image labeling, bounding-box operations, path drawing, and region highlighting.
 
@@ -50,14 +54,7 @@ Second, **SFT trajectory synthesis** uses a diverse task database and a stronger
 
 Finally, **OR-GIGPO training** improves the initialized agent with grouped rollouts. Observation-relaxed grouping aligns trajectories with similar text-tool observations, while leaving unmatched image or text observations separate. PERIA then combines step-level and episode-level advantages for the PPO update.
 
-![PERIA tool-augmented reasoning](assets/figure2.png)
-
-### Results summary
-
-![PERIA results summary](assets/image.png)
-
-PERIA-8B substantially improves over the Qwen3-VL-8B-Thinking backbone, improving in-distribution benchmarks by 10.0% and out-of-distribution benchmarks by 4.4%. It also achieves performance comparable to much larger models such as Qwen3-VL-235B-A22B-Thinking and GPT-5 on spatial reasoning benchmarks.
-
+![PERIA tool-augmented reasoning](assets/figure2.png) -->
 
 ## Installation
 
@@ -72,7 +69,7 @@ This repo has three mutually incompatible environments because SFT, RL, and tool
 
 ## Evaluation
 
-We use `PEDIA_8B_v1` model and `visual_probe_easy` dataset as the running example in this section. More models and datasets are listed in [Dataset and Models](#dataset-and-models).
+We use `PEDIA_8B` model and `visual_probe_easy` dataset as the running example in this section. More models and datasets are listed in [Dataset and Models](#dataset-and-models).
 
 ### Env setup
 
@@ -86,12 +83,12 @@ Download PERIA-8B, the tool backends, and extract the ID evaluation tarball:
 
 ```bash
 # PERIA-8B checkpoint + tool backends
-hf download Antoinegg1/pedia_model \
-    --include "PEDIA_8B_v1/*" "PaddleOCR-VL-1.5/*" "sam3.1/*" "grounding-dino-base/*" \
+hf download Changyeli03/pedia_model \
+    --include "PEDIA_8B/*" "PaddleOCR-VL-1.5/*" "sam3.1/*" "grounding-dino-base/*" \
     --local-dir ./pedia_model
 
 # visual_probe_easy evaluation benchmarks visual_probe_easy
-hf download Antoinegg1/pedia_data  \
+hf download Changyeli03/pedia_data  \
     eval/id/visual_probe_easy.parquet \
     --repo-type dataset \
     --local-dir ./pedia_data
@@ -114,13 +111,13 @@ Use the same `peria-inference` environment from the inference step:
 DATASET=visual_probe_easy bash pedia/scripts/run_eval.sh
 ```
 
-Raw inference outputs are saved under `./outputs/eval_results/visual_probe_easy/PEDIA_8B_v1/`, and scored summaries are saved under `./outputs/eval_output/visual_probe_easy/PEDIA_8B_v1/`.
+Raw inference outputs are saved under `./outputs/eval_results/visual_probe_easy/PEDIA_8B/`, and scored summaries are saved under `./outputs/eval_output/visual_probe_easy/PEDIA_8B/`.
 
 By default, `run_eval.sh` uses rule-based scoring only. To reproduce paper numbers, enable the LLM-judge fallback with `export JUDGE_API_KEY=<your-openai-key>`.
 
 ## SFT Training
 
-SFT trains from the public Qwen3-VL-8B-Thinking base model on `pedia_sft_v1`.
+SFT trains from the public Qwen3-VL-8B-Thinking base model on `pedia_sft`.
 
 ### Env setup
 
@@ -136,20 +133,20 @@ Download the base VLM and SFT data:
 hf download Qwen/Qwen3-VL-8B-Thinking \
     --local-dir ./pedia_model/Qwen3-VL-8B-Thinking
 
-hf download Antoinegg1/pedia_data --repo-type dataset \
-    --include "pedia_sft_v1.tar" \
+hf download Changyeli03/pedia_data --repo-type dataset \
+    --include "pedia_sft.tar" \
     --local-dir ./pedia_data
 
-tar -xvf ./pedia_data/pedia_sft_v1.tar -C ./pedia_data
+tar -xvf ./pedia_data/pedia_sft.tar -C ./pedia_data
 ```
 
 Run SFT on one 8-GPU node:
 
 ```bash
-bash llamafactory/train_v1.sh
+bash llamafactory/train.sh
 ```
 
-The checkpoint is written to `./pedia_model/pedia_8b_SFT_v1/` and SFT configuration lives in [`llamafactory/configs/pedia_sft_v1.yaml`](llamafactory/configs/pedia_sft_v1.yaml).
+The checkpoint is written to `./pedia_model/pedia_8b_SFT/` and SFT configuration lives in [`llamafactory/configs/pedia_sft.yaml`](llamafactory/configs/pedia_sft.yaml).
 
 ## RL Training
 
@@ -164,7 +161,7 @@ conda create -n peria-tools python=3.11 -y
 conda activate peria-tools
 cd train_tool_server && pip install -r requirements.txt && cd ..
 
-hf download Antoinegg1/pedia_model \
+hf download Changyeli03/pedia_model \
     --include "PaddleOCR-VL-1.5/*" "sam3.1/*" "grounding-dino-base/*" \
     --local-dir ./pedia_model
 
@@ -191,21 +188,21 @@ pip install flash-attn==2.7.4.post1 --no-build-isolation
 pip install -r requirements.txt
 cd ..
 
-hf download Antoinegg1/pedia_model \
-    --include "pedia_8b_SFT_v1/*" \
+hf download Changyeli03/pedia_model \
+    --include "pedia_8b_SFT/*" \
     --local-dir ./pedia_model
 
-hf download Antoinegg1/pedia_data --repo-type dataset \
-    --include "pedia_rl_v1.tar" \
+hf download Changyeli03/pedia_data --repo-type dataset \
+    --include "pedia_rl.tar" \
     --local-dir ./pedia_data
 
-tar -xvf ./pedia_data/pedia_rl_v1.tar -C ./pedia_data
+tar -xvf ./pedia_data/pedia_rl.tar -C ./pedia_data
 
 TOOL_SERVER_IP=<node-a-ip> \
-    bash verl-tool/examples/train/pedia/run_pedia_rl_v1_singlenode.sh
+    bash verl-tool/examples/train/pedia/run_pedia_rl_singlenode.sh
 ```
 
-RL outputs are saved under `./outputs/mixed_rl/`. For 4-node training, use [`verl-tool/examples/train/pedia/run_pedia_rl_v1_multinode.sh`](verl-tool/examples/train/pedia/run_pedia_rl_v1_multinode.sh) with the Ray startup scripts in the same directory.
+RL outputs are saved under `./outputs/mixed_rl/`. For 4-node training, use [`verl-tool/examples/train/pedia/run_pedia_rl_multinode.sh`](verl-tool/examples/train/pedia/run_pedia_rl_multinode.sh) with the Ray startup scripts in the same directory.
 
 By default, RL uses rule-based rewards only. To fully reproduce our experiments, enable the LLM-judge fallback used by the `geo_vision_qa` reward manager:
 
@@ -220,24 +217,24 @@ For multi-node RL, export the same `JUDGE_API_KEY` / `JUDGE_API_BASE` / `JUDGE_M
 
 ## Dataset and Models
 
-All released checkpoints live in [Antoinegg1/pedia_model](https://huggingface.co/Antoinegg1/pedia_model):
+All released checkpoints live in [Changyeli03/pedia_model](https://huggingface.co/Changyeli03/pedia_model):
 
 | Path | Purpose |
 |---|---|
-| `PEDIA_8B_v1/` | Default 8B RL checkpoint  |
-| `pedia_8b_SFT_v1/` | 8B SFT checkpoint used as the RL starting point |
-| `pedia_4b_v1/` | Optional 4B RL checkpoint |
-| `pedia_2b_v1/` | Optional 2B RL checkpoint |
+| `PEDIA_8B/` | Default 8B RL checkpoint  |
+| `pedia_8b_SFT/` | 8B SFT checkpoint used as the RL starting point |
+| `pedia_4b/` | Optional 4B RL checkpoint |
+| `pedia_2b/` | Optional 2B RL checkpoint |
 | `PaddleOCR-VL-1.5/` | OCR and document perception tool backend |
 | `sam3.1/` | Segmentation tool backend |
 | `grounding-dino-base/` | Grounding tool backend |
 
-All released data lives in [Antoinegg1/pedia_data](https://huggingface.co/datasets/Antoinegg1/pedia_data):
+All released data lives in [Changyeli03/pedia_data](https://huggingface.co/datasets/Changyeli03/pedia_data):
 
 | Path | Purpose |
 |---|---|
-| `pedia_sft_v1.tar` | SFT data archive: `train.json` and images |
-| `pedia_rl_v1.tar` | RL train and validation parquet files plus images |
+| `pedia_sft.tar` | SFT data archive: `train.json` and images |
+| `pedia_rl.tar` | RL train and validation parquet files plus images |
 | `eval/id/*.parquet` | In-distribution evaluation benchmarks |
 | `eval/ood/*.parquet` | Out-of-distribution evaluation benchmarks |
 
@@ -247,9 +244,9 @@ Registered evaluation dataset ids:
 - OOD: `visworld_cube`, `visworld_mmsi`, `visworld_ballgame`, `visworld_paperfolding`, `mapeval_visual`, `babyvision`, `vstar_bench`
 
 
-## Data Synthesis
+<!-- ## Data Synthesis
 
-Data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation), but we do not provide a one-command recipe because each source dataset requires dataset-specific normalization of records, images, answers, IDs, and prompts. The core workflow is to sample multi-turn tool-use trajectories with `pedia.scripts.iterative_sampling_generate`, filter and diversify them with `pedia.data_preprocess.augment_traj_data`, and convert the retained trajectories into LLaMA-Factory SFT format with `pedia.data_preprocess.convert_trajectory_to_sft`.
+Data synthesis uses the same `peria-inference` environment as [Evaluation](#evaluation), but we do not provide a one-command recipe because each source dataset requires dataset-specific normalization of records, images, answers, IDs, and prompts. The core workflow is to sample multi-turn tool-use trajectories with `pedia.scripts.iterative_sampling_generate`, filter and diversify them with `pedia.data_preprocess.augment_traj_data`, and convert the retained trajectories into LLaMA-Factory SFT format with `pedia.data_preprocess.convert_trajectory_to_sft`. -->
 
 ## Citation
 

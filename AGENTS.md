@@ -5,7 +5,7 @@
 ## TL;DR
 
 - **Project**: PERIA (*Perceive, Interact, Reason: Building Tool-Augmented Visual Agents for Spatial Reasoning*).
-- **Default eval model**: `./pedia_model/PEDIA_8B_v1`.
+- **Default eval model**: `./pedia_model/PEDIA_8B`.
 - **Naming rule**: project name is **PERIA**, but on-disk prefixes remain `pedia_*` for data, model dirs, and training configs. Do not rename them.
 - **Path rule**: keep state under `./pedia_model/`, `./pedia_data/`, and `./outputs/{mixed_rl,eval_results,eval_output,eval_logs,trajectories}/`. Never hard-code absolute paths; use `PEDIA_MODEL` / `PEDIA_DATA` overrides.
 - **Runtime rule**: use Conda envs, not Singularity, for new work.
@@ -21,25 +21,25 @@
 
 ## Hugging Face Sources
 
-- Models and tool backends: `Antoinegg1/pedia_model`
-- Released data: `Antoinegg1/pedia_data`
+- Models and tool backends: `Changyeli03/pedia_model`
+- Released data: `Changyeli03/pedia_data`
 - Public SFT base model: `Qwen/Qwen3-VL-8B-Thinking`
 
 Model paths in `./pedia_model/`:
 
 | Path | Purpose |
 |---|---|
-| `PEDIA_8B_v1/` | Default 8B RL checkpoint |
-| `pedia_8b_SFT_v1/` | 8B SFT checkpoint used as RL start |
-| `pedia_4b_v1/`, `pedia_2b_v1/` | Optional RL checkpoints |
+| `PEDIA_8B/` | Default 8B RL checkpoint |
+| `pedia_8b_SFT/` | 8B SFT checkpoint used as RL start |
+| `pedia_4b/`, `pedia_2b/` | Optional RL checkpoints |
 | `PaddleOCR-VL-1.5/`, `sam3.1/`, `grounding-dino-base/` | Tool backends |
 
 Data paths in `./pedia_data/`:
 
 | Path | Purpose |
 |---|---|
-| `pedia_sft_v1.tar` | SFT data archive; extract to `./pedia_data/pedia_sft_v1/` |
-| `pedia_rl_v1.tar` | RL data archive; extract to `./pedia_data/pedia_rl_v1/` |
+| `pedia_sft.tar` | SFT data archive; extract to `./pedia_data/pedia_sft/` |
+| `pedia_rl.tar` | RL data archive; extract to `./pedia_data/pedia_rl/` |
 | `eval/id/*.parquet`, `eval/ood/*.parquet` | Evaluation parquet files |
 
 ## Environments
@@ -59,7 +59,7 @@ Data paths in `./pedia_data/`:
 
 - Example dataset in README: `visual_probe_easy`.
 - Use `peria-inference`.
-- Download `PEDIA_8B_v1/*` plus the three tool backend dirs.
+- Download `PEDIA_8B/*` plus the three tool backend dirs.
 - Download the needed eval parquet, e.g. `eval/id/visual_probe_easy.parquet`.
 - Run:
 
@@ -74,9 +74,9 @@ DATASET=visual_probe_easy bash pedia/scripts/run_eval.sh
 
 - Use `peria-sft`.
 - Download `Qwen/Qwen3-VL-8B-Thinking` to `./pedia_model/Qwen3-VL-8B-Thinking`.
-- Download `pedia_sft_v1.tar` and extract under `./pedia_data`.
-- Run `bash llamafactory/train_v1.sh`.
-- Output: `./pedia_model/pedia_8b_SFT_v1/`.
+- Download `pedia_sft.tar` and extract under `./pedia_data`.
+- Run `bash llamafactory/train.sh`.
+- Output: `./pedia_model/pedia_8b_SFT/`.
 
 ### RL
 
@@ -88,11 +88,11 @@ bash train_tool_server/scripts/launch_tool_server.sh
 hostname -i
 ```
 
-- Node B uses a fresh `peria-rl` env, downloads `pedia_8b_SFT_v1/*`, downloads/extracts `pedia_rl_v1.tar`, then runs:
+- Node B uses a fresh `peria-rl` env, downloads `pedia_8b_SFT/*`, downloads/extracts `pedia_rl.tar`, then runs:
 
 ```bash
 TOOL_SERVER_IP=<node-a-ip> \
-    bash verl-tool/examples/train/pedia/run_pedia_rl_v1_singlenode.sh
+    bash verl-tool/examples/train/pedia/run_pedia_rl_singlenode.sh
 ```
 
 The RL launcher builds `http://<node-a-ip>:30888/get_observation`. It also still accepts a full `TOOL_SERVER_URL`.
