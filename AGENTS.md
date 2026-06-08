@@ -123,6 +123,5 @@ To add a dataset, update `DATASET_REGISTRY`; avoid editing shell launchers for d
 1. Run `unset ROCR_VISIBLE_DEVICES` before Ray starts on NVIDIA machines.
 2. Eval tool calls use local **Ray actors** created by `ToolRouter`; RL tool calls use the **HTTP router** via `TOOL_SERVER_IP` / `TOOL_SERVER_URL`.
 3. `train_tool_server/train_tool_server/tools/pedia_base.py` should resolve `_AREAL_ROOT` with 3 `..` levels after repo flattening.
-4. Keep `pedia/tool_definitions/agents/paddleocr_tool.py` at `num_replicas: 2`; increasing replicas can OOM.
+4. Keep `pedia/tool_definitions/agents/paddleocr_tool.py` at `num_replicas: 2`.
 5. Do not add wandb; training scripts use console logging.
-6. `launch_cantainer.sh` is legacy and should not be recommended for new setup.
