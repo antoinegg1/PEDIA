@@ -2,9 +2,9 @@
 
 This repository releases the official implementation of **PERIA: Perceive, Interact, Reason — Building Tool-Augmented Visual Agents for Spatial Reasoning**.
 
-> **NeurIPS 2026 camera-ready release.** The repository name remains `PEDIA` for compatibility with the released checkpoints and data; the method and paper are referred to as **PERIA**.
+> **Accepted at NeurIPS 2026; camera-ready manuscript in preparation.** The repository name remains `PEDIA` for compatibility with the released checkpoints and data; the method and paper are referred to as **PERIA**.
 
-**Resources:** [Code](https://github.com/antoinegg1/PEDIA) · [Models and tool backends](https://huggingface.co/Changyeli03/pedia_model) · [Datasets](https://huggingface.co/datasets/Changyeli03/pedia_data)
+**Resources:** [Paper (arXiv:2606.12830)](https://arxiv.org/abs/2606.12830) · [Code](https://github.com/antoinegg1/PEDIA) · [Models and tool backends](https://huggingface.co/Changyeli03/pedia_model) · [Datasets](https://huggingface.co/datasets/Changyeli03/pedia_data)
 
 PERIA is a tool-augmented visual agent for spatial reasoning. It builds on a Qwen3-VL backbone and learns to actively call perception and interaction tools to acquire fine-grained spatial evidence before answering.
 
@@ -253,11 +253,12 @@ Data synthesis uses the same `peria-inference` environment as [Evaluation](#eval
 ## Citation
 
 ```bibtex
-@article{peria2026,
-    author  = {<TODO authors>},
-    title   = {Perceive, Interact, Reason: Building Tool-Augmented Visual Agents for Spatial Reasoning},
-    journal = {arXiv},
-    year    = {2026}
+@article{li2026peria,
+    title         = {Perceive, Interact, Reason: Building Tool-Augmented Visual Agents for Spatial Reasoning},
+    author        = {Li, Changye and Lu, Meng and Wu, Yi and Zhu, Ligeng},
+    journal       = {arXiv preprint arXiv:2606.12830},
+    year          = {2026},
+    url           = {https://arxiv.org/abs/2606.12830}
 }
 ```
 
