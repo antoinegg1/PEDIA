@@ -1,10 +1,16 @@
+<p align="center">
+  <a href="https://antoinegg1.github.io/PEDIA/">
+    <img src="assets/brand/pedia-icon.png" width="112" height="112" alt="PERIA project icon: visual perception and spatial path reasoning">
+  </a>
+</p>
+
 <h1 align="center"> PERIA: Perceive, Interact, Reason — Building Tool-Augmented Visual Agents for Spatial Reasoning </h1>
 
 This repository releases the official implementation of **PERIA: Perceive, Interact, Reason — Building Tool-Augmented Visual Agents for Spatial Reasoning**.
 
 > **Accepted at NeurIPS 2026; camera-ready manuscript in preparation.** The repository name remains `PEDIA` for compatibility with the released checkpoints and data; the method and paper are referred to as **PERIA**.
 
-**Resources:** [Paper (arXiv:2606.12830)](https://arxiv.org/abs/2606.12830) · [Code](https://github.com/antoinegg1/PEDIA) · [Models and tool backends](https://huggingface.co/Changyeli03/pedia_model) · [Datasets](https://huggingface.co/datasets/Changyeli03/pedia_data)
+**Resources:** [Project page](https://antoinegg1.github.io/PEDIA/) · [Paper (arXiv:2606.12830)](https://arxiv.org/abs/2606.12830) · [Code](https://github.com/antoinegg1/PEDIA) · [Models and tool backends](https://huggingface.co/Changyeli03/pedia_model) · [Datasets](https://huggingface.co/datasets/Changyeli03/pedia_data)
 
 PERIA is a tool-augmented visual agent for spatial reasoning. It builds on a Qwen3-VL backbone and learns to actively call perception and interaction tools to acquire fine-grained spatial evidence before answering.
 
